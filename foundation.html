@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Winnik Group — Design Tokens &amp; Type Specimen</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Archivo:wght@500;600;700&family=Source+Code+Pro:wght@400;500&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="css/tokens.css" />
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <main class="specimen">
+    <div class="specimen__intro">
+      <p class="specimen__label">Foundation / 01</p>
+      <h1 class="specimen__title">Design tokens &amp; type specimen</h1>
+      <p class="specimen__subtitle">
+        Palette, fonts, and type scale for the Winnik Group site, before any
+        real section gets built. Fonts: Archivo (display), Inter (body),
+        Source Code Pro (mono). Check this against the brief and the
+        references, then send feedback.
+      </p>
+    </div>
+
+    <section class="block">
+      <h2 class="block__heading">Color — strict monochrome</h2>
+      <div class="swatches">
+        <div class="swatch">
+          <div class="swatch__fill" style="background: var(--ink);"></div>
+          <div class="swatch__meta">
+            <span class="swatch__name">ink</span>
+            <span class="swatch__hex">#0A0A0A</span>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch__fill" style="background: var(--paper); border-bottom: var(--border-hairline);"></div>
+          <div class="swatch__meta">
+            <span class="swatch__name">paper</span>
+            <span class="swatch__hex">#FFFFFF</span>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch__fill" style="background: var(--paper-2);"></div>
+          <div class="swatch__meta">
+            <span class="swatch__name">paper-2</span>
+            <span class="swatch__hex">#F5F4F2</span>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch__fill" style="background: var(--mute);"></div>
+          <div class="swatch__meta">
+            <span class="swatch__name">mute</span>
+            <span class="swatch__hex">#6B6B6B</span>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch__fill" style="background: var(--hairline);"></div>
+          <div class="swatch__meta">
+            <span class="swatch__name">hairline</span>
+            <span class="swatch__hex">#E4E4E4</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2 class="block__heading">Alternating section bands</h2>
+      <div class="band-demo">
+        <div class="band-demo__paper">--paper (main sections)</div>
+        <div class="band-demo__paper-2">--paper-2 (alternating band)</div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2 class="block__heading">Display type — Archivo</h2>
+      <div class="type-row">
+        <span class="type-row__meta">80px / 700</span>
+        <p class="type-row__sample type-row__sample--display" style="font-size: var(--text-4xl);">Polymer science</p>
+      </div>
+      <div class="type-row">
+        <span class="type-row__meta">56px / 700</span>
+        <p class="type-row__sample type-row__sample--display" style="font-size: var(--text-3xl);">Winnik Group</p>
+      </div>
+      <div class="type-row">
+        <span class="type-row__meta">40px / 700</span>
+        <p class="type-row__sample type-row__sample--display" style="font-size: var(--text-2xl);">Research areas</p>
+      </div>
+      <div class="type-row">
+        <span class="type-row__meta">28px / 600</span>
+        <p class="type-row__sample type-row__sample--display-medium" style="font-size: var(--text-xl);">Metal-chelating polymers</p>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2 class="block__heading">Body type — Inter</h2>
+      <div class="type-row">
+        <span class="type-row__meta">20px / 400</span>
+        <p class="type-row__sample type-row__sample--body" style="font-size: var(--text-lg);">
+          The Winnik group studies a broad spectrum of topics in the general areas of polymer science, self-assembly, and nanochemistry.
+        </p>
+      </div>
+      <div class="type-row">
+        <span class="type-row__meta">17px / 400 (base)</span>
+        <p class="type-row__sample type-row__sample--body" style="font-size: var(--text-base);">
+          Students and Postdocs in the group come from different backgrounds and have different areas of expertise.
+        </p>
+      </div>
+      <div class="type-row">
+        <span class="type-row__meta">14px / 500</span>
+        <p class="type-row__sample type-row__sample--body" style="font-size: var(--text-sm); font-weight: 500;">
+          Research &middot; People &middot; Publications &middot; Contact
+        </p>
+      </div>
+
+      <div class="prose" style="margin-top: var(--space-4);">
+        <p class="specimen__label" style="margin-bottom: var(--space-2);">Paragraph at body size, relaxed line-height (1.7)</p>
+        <p>
+          Mass cytometry is a high-throughput multiparameter bioanalytical technique for studying biomarker expression on individual cells. Antibodies or other reagents are used to label the cells with isotopes of heavy atoms (mass tags) that can then be detected by atomic mass spectrometry with single mass resolution.
+        </p>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2 class="block__heading">Mono / utility type — Source Code Pro</h2>
+      <div class="type-row">
+        <span class="type-row__meta">Section eyebrow</span>
+        <p class="type-row__sample type-row__sample--mono" style="font-size: var(--text-xs); letter-spacing: 0.08em; text-transform: uppercase; color: var(--mute);">01 / Mass Cytometry</p>
+      </div>
+      <div class="type-row">
+        <span class="type-row__meta">Chemical formula</span>
+        <p class="type-row__sample type-row__sample--mono" style="font-size: var(--text-base);">⟦ –CH₂–CH(C₆H₅)– ⟧ₙ</p>
+      </div>
+      <div class="type-row">
+        <span class="type-row__meta">Citation key</span>
+        <p class="type-row__sample type-row__sample--mono" style="font-size: var(--text-sm);">Chem. Sci. 2022, 13, 3233–3243</p>
+      </div>
+
+      <dl class="mono-usage" style="margin-top: var(--space-4);">
+        <div>
+          <dt>Member email</dt>
+          <dd>m.winnik@utoronto.ca</dd>
+        </div>
+      </dl>
+    </section>
+
+    <section class="block">
+      <h2 class="block__heading">Wordmark lockup</h2>
+      <span class="wordmark">⟦ Winnik Group ⟧<span class="wordmark__n">n</span></span>
+    </section>
+  </main>
+</body>
+</html>

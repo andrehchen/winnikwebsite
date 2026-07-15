@@ -1,0 +1,42 @@
+:root {
+  /* Color */
+  --ink: #0A0A0A;
+  --paper: #FFFFFF;
+  --paper-2: #F5F4F2;
+  --mute: #6B6B6B;
+  --hairline: #E4E4E4;
+
+  /* Type families */
+  --font-display: "Archivo", sans-serif;
+  --font-body: "Inter", sans-serif;
+  --font-mono: "Source Code Pro", monospace;
+
+  /* Type scale (major third-ish, tuned by hand) */
+  --text-xs: 0.75rem;    /* 12px — mono labels, captions */
+  --text-sm: 0.875rem;   /* 14px — small body, nav */
+  --text-base: 1.0625rem;/* 17px — body copy */
+  --text-lg: 1.25rem;    /* 20px — lead paragraphs */
+  --text-xl: 1.75rem;    /* 28px — subheadings */
+  --text-2xl: 2.5rem;    /* 40px — section headings */
+  --text-3xl: 3.5rem;    /* 56px — hero, page titles */
+  --text-4xl: 5rem;      /* 80px — display / hero thesis */
+
+  /* Line height */
+  --leading-tight: 1.15;
+  --leading-normal: 1.6;
+  --leading-relaxed: 1.7;
+
+  /* Spacing scale */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 1rem;
+  --space-4: 1.5rem;
+  --space-5: 2.5rem;
+  --space-6: 4rem;
+  --space-7: 6rem;
+  --space-8: 9rem;
+
+  /* Layout */
+  --content-max: 72rem;
+  --border-hairline: 1px solid var(--hairline);
+}
