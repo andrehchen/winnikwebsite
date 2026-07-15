@@ -39,4 +39,5 @@
   /* Layout */
   --content-max: 72rem;
   --border-hairline: 1px solid var(--hairline);
+  --header-h: 4.5rem;
 }
