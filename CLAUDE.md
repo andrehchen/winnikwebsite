@@ -20,3 +20,19 @@
   server, tell the user precisely what changed and what to check in their
   own browser, and wait for their approval or specific feedback before
   moving on.
+- Interactive canvas/animation scenes (e.g. the Research page's molecular
+  scenes) must pause their animation loop via IntersectionObserver when
+  scrolled out of view — never run requestAnimationFrame forever regardless
+  of visibility.
+- Custom scroll-paging (research.html) must never change page from residual
+  scroll momentum — a page change only commits on genuine input at the
+  actual section boundary, and opposing input is ignored while a scroll
+  transition is still settling.
+- Before building a chemistry-themed interactive/visual element, sanity-check
+  its scientific accuracy explicitly with the user rather than assuming —
+  design it to match how the real chemistry actually behaves.
+- Standalone experimental/prototype HTML files live in /prototypes, not the
+  project root.
+- Compress large images before committing (e.g. via `sips`), and confirm a
+  new image asset is actually referenced by a page before adding it to the
+  repo.

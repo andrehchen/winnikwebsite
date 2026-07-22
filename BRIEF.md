@@ -194,6 +194,22 @@ deployed site; referencing is fine for fast prototyping.
   server, tell the user precisely what changed and what to check in their
   own browser, and wait for their approval or specific feedback before
   moving on.
+- Interactive canvas/animation scenes (e.g. the Research page's molecular
+  scenes) must pause their animation loop via IntersectionObserver when
+  scrolled out of view — never run requestAnimationFrame forever regardless
+  of visibility.
+- Custom scroll-paging (research.html) must never change page from residual
+  scroll momentum — a page change only commits on genuine input at the
+  actual section boundary, and opposing input is ignored while a scroll
+  transition is still settling.
+- Before building a chemistry-themed interactive/visual element, sanity-check
+  its scientific accuracy explicitly with the user rather than assuming —
+  design it to match how the real chemistry actually behaves.
+- Standalone experimental/prototype HTML files live in /prototypes, not the
+  project root.
+- Compress large images before committing (e.g. via `sips`), and confirm a
+  new image asset is actually referenced by a page before adding it to the
+  repo.
 ```
 
 ---
@@ -450,78 +466,94 @@ rhythm, all-same-weight text, emoji, drop shadows, decorative gradients.
 
 ---
 
-## 11. Current build status (last updated 2026-07-15)
-
-Everything below is **structure and design system only** — no final page
-content (bios, member grid, publication list, research copy) has been
-written yet. Content passes happen when explicitly requested, one page at a
-time.
+## 11. Current build status (last updated 2026-07-22)
 
 ### Done
 
-- **Design tokens locked** (`css/tokens.css`): palette (ink/paper/paper-2/mute/
-  hairline), type scale, spacing scale. Fonts finalized after live comparison:
-  **Archivo** (display), **Inter** (body), **Source Code Pro** (mono) —
-  replaced the brief's original Space Grotesk/IBM Plex Mono suggestion.
-  Specimen page preserved at `foundation.html` (not linked in nav).
-- **References gathered** (`/references`, 4 files): Matter Lab (primary),
-  Li Bowen team page, BBML/Miserez, Wheeler microfluidics — each with
-  specific notes on what to borrow vs. avoid, not screenshots.
-- **Site structure decided:** multi-page. Six pages: `index.html`,
-  `research.html`, `winnik.html`, `people.html`, `publications.html`,
-  `contact.html`. `winnik.html` (PI) and `people.html` (rest of group) are
-  split rather than one combined People page.
-- **Sticky nav** built on every page: bracket-*n* wordmark
-  (`⟦ Winnik Group ⟧ₙ`) left, links right, active-page underline via
-  `aria-current="page"`, mobile hamburger below 640px, visible focus states.
-- **Home page (`index.html`)** built as a full scroll experience:
-  - Full-height hero (`min-height: 100vh - header height`) with a
-    placeholder thesis line and a circular-free triple-chevron scroll cue
-    that animates on hover (staggered downward pulse, respects
-    `prefers-reduced-motion`).
-  - Five full "section-preview" blocks below it — Research, Winnik, People,
-    Publications, Contact — alternating left/right text position and
-    white/off-white bands, each with a bordered `.btn` link to its page.
-  - No divider line between hero and the first section (removed per
-    feedback).
-- **Sub-pages** (`research.html`, `winnik.html`, `people.html`,
-  `publications.html`, `contact.html`): consistent header/nav/footer shell +
-  a page-intro title/subtitle + a placeholder note describing what real
-  content goes there. `winnik.html` and `people.html` cross-link to each
-  other.
-- **Footer**: minimal version on every page (copyright + Dept. of Chemistry +
-  UofT links). Does not yet include the social links from BRIEF §6 (Twitter/
-  Instagram/YouTube/LinkedIn).
-- **Local dev workflow**: static server via `python3 -m http.server 8000` in
-  the project root; review happens live in the user's own browser, not via
-  screenshots (Claude does not self-verify with screenshots either — just
-  reports the change and asks the user to check).
+- **Design tokens locked** (`css/tokens.css`, `css/site.css`, `css/style.css`,
+  `css/base.css`): palette (ink/paper/paper-2/mute/hairline), type scale,
+  spacing scale. Fonts finalized after live comparison: **Archivo** (display),
+  **Inter** (body), **Source Code Pro** (mono, incl. weight 600 for
+  publication titles). Specimen page preserved at `foundation.html` (not
+  linked in nav).
+- **References gathered** (`/references`, 6 files): Matter Lab (primary),
+  Li Bowen team page, BBML/Miserez, Wheeler microfluidics, a minimal-portfolio
+  landbook reference, and a Siteinspire (Angela Ricciardi) reference — each
+  with specific notes on what to borrow vs. avoid, not screenshots.
+- **Site structure**: ten pages. `index.html`, `research.html`,
+  `winnik.html`, `people.html`, `publications.html`, `contact.html`,
+  `foundation.html` (unlinked type specimen), plus three deep-dive stub
+  pages reached from Research's "learn more" links —
+  `mass-cytometry.html`, `films.html`, `cncs.html`.
+- **Sticky nav**: bracket-*n* wordmark (`⟦ Winnik Group ⟧ₙ`) left, links
+  right, active-page underline via `aria-current="page"`, mobile hamburger
+  below 640px, visible focus states.
+- **Home page (`index.html`)**: full-height hero + section-preview blocks
+  linking out to each page.
+- **Research page (`research.html`)** — the most built-out page, now a
+  full custom scroll-paging experience rather than a plain scrolling page:
+  - JS-driven "one section per scroll" paging with rubber-band resistance,
+    a momentum-decay heuristic so a decaying trackpad/wheel tail never
+    triggers a page change (only a genuine input at the actual section
+    boundary does), and a unified settling/waitForArrival state machine so
+    opposing input mid-transition can't leave the scroll stuck.
+  - **Mass Cytometry section**: an interactive canvas scene (mesoporous
+    silica nanoparticle stand-in) with a draggable/hoverable lanthanide
+    ring; pauses its animation loop via `IntersectionObserver` when
+    scrolled out of view.
+  - **Latex Films section**: an interactive core-shell latex particle
+    canvas scene — particles diffuse slowly in solution; clicking one
+    cures the batch, growing hexagonal shell outlines and interlink
+    "bridges" between neighboring particles that propagate outward
+    (BFS hop-delay) from the clicked particle; clicking again reverses it.
+    Full-bleed canvas, transparent background, and an SVG clipPath system
+    that turns the overlaid heading/body text white only where a particle
+    currently overlaps it. Also visibility-gated and frame-cache-optimized
+    (no per-frame layout reads).
+  - **Real research copy** added verbatim for Mass Cytometry, Latex Films
+    (BASF/FRET paragraph), and Cellulose Nanocrystals (CNCs), plus a
+    user-approved page-intro subtitle.
+  - Each of the three interactive sections links out via a "Learn more"
+    button to its still-placeholder deep-dive page (see below).
+- **Publications page (`publications.html`)**: full real list (67 entries,
+  2020–2025) fetched from the live Winnik group site, formatted in the
+  brief's mono citation style, DOI/article links preserved.
+- **People / Winnik pages**: real member table and PI bio content in place;
+  a few members without a photo fall back to a shared grayscale
+  `placeholder.png` rather than a broken image.
+- **Footer**: consistent single-line copyright + Dept. of Chemistry link +
+  University of Toronto link (right-aligned) on all pages — deduplicated
+  after an earlier pass had redundant copyright text.
+- **Local dev workflow**: static server via `python3 -m http.server 8000`;
+  review happens live in the user's own browser, never via screenshots.
+- **Repo housekeeping**: standalone prototype HTML files consolidated into
+  a `prototypes/` folder (`chain-physics-prototype.html`,
+  `core-shell-prototype.html`, `msn-prototype.html`,
+  `silane-prototype.html`); oversized JPEGs in `assets/photos/headshots/`
+  and the `references/` group photo compressed in place (`sips`); a
+  `.gitignore` covers `.DS_Store`.
 
 ### Not started yet
 
-- **Hero content**: still placeholder text. Needs the actual hairline
-  polymer-chain/molecular SVG line art + one-line thesis copy (BRIEF §2, §6).
+- **Deep-dive pages** `mass-cytometry.html`, `films.html`, `cncs.html`:
+  still the header/nav/footer shell + a placeholder note only — the real
+  per-topic long-form content (beyond what's already on `research.html`)
+  hasn't been written.
+- **Contact page**: still a placeholder note; real content (email, room,
+  address — BRIEF §6) not yet swapped in.
 - **Signature hairline SVG motifs**: the skeletal-structure section markers
-  described in BRIEF §2 haven't been designed anywhere yet — only mono-text
-  eyebrow labels exist so far.
-- **Research page**: five editorial rows (image + heading + verbatim
-  description, alternating image side, mono eyebrow labels) — content is
-  fully specified in BRIEF §6, just not built.
-- **Winnik page**: PI photo, contact details, full bio (BRIEF §6 has the
-  complete text).
-- **People page**: grayscale member grid for the 8 group members (BRIEF §6
-  has the full table). Grayscale treatment (CSS `filter: grayscale(1)`)
-  decided but not yet applied since no photos are placed yet.
-- **Publications page**: needs the live publications list fetched and
-  reproduced in mono citation style, grouped by year (BRIEF §6).
-- **Contact page**: content is short and fully specified in BRIEF §6, just
-  needs to replace the placeholder.
-- **Image assets**: none downloaded or referenced yet (see BRIEF §7 for
-  source URLs).
-- **Footer social links**: department social URLs from BRIEF §6 not yet
-  added.
-- **Responsive pass**: only the nav has been mobile-tested so far; research
-  rows / people grid / publications list haven't been built yet, so their
-  mobile behavior is untested.
+  described in BRIEF §2 still haven't been designed as standalone section
+  dividers (the Research page's canvas scenes cover the "molecular visual
+  interest" goal for now, but the hairline-SVG-as-divider idea specifically
+  is separate and unbuilt).
+- **Footer social links**: department social URLs from BRIEF §6 (Twitter/
+  Instagram/YouTube/LinkedIn) not yet added.
+- **Full responsive pass**: nav and the Research scroll-paging have been
+  spot-checked; a systematic mobile pass across every page hasn't happened.
 - **Open decisions from §10** (logo, news section, hosting path) are still
   unresolved — need the group's input.
+- **`.git` history size**: working-tree assets are now compressed, but the
+  old, larger blobs remain in git history (~110MB `.git` folder); shrinking
+  that would need a history rewrite (`git filter-repo`/BFG) + force-push,
+  not done and not recommended without explicit sign-off given it rewrites
+  shared history.
