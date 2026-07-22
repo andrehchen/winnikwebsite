@@ -13,13 +13,218 @@
   <link rel="stylesheet" href="css/tokens.css" />
   <link rel="stylesheet" href="css/base.css" />
   <link rel="stylesheet" href="css/site.css" />
+  <style>
+    /* Mass Cytometry section — interactive MSN scene alongside the summary,
+       so it can be played with while reading. */
+    .mc-scene-grid {
+      display: grid;
+      grid-template-columns: 1fr 2.1fr;
+      gap: var(--space-4);
+      align-items: center;
+    }
+    @media (max-width: 900px) {
+      .mc-scene-grid { grid-template-columns: 1fr; }
+    }
+    .mc-scene-canvas {
+      position: relative;
+      width: 100%;
+      /* Section is a full 100vh now, so let the scene use most of that
+         instead of a fixed card-sized height — 140px leaves room for the
+         header overlap plus a little breathing space top and bottom. */
+      height: calc(100vh - 140px);
+      overflow: hidden;
+      background: var(--paper);
+    }
+    .mc-scene-canvas canvas { display: block; touch-action: none; cursor: grab; }
+    .mc-scene-canvas canvas.dragging { cursor: grabbing; }
+
+    /* Alternating left/right rhythm, matching the homepage's
+       .section-preview--right pattern: shifts the whole text block (not
+       just its inline text) to the right edge of the centered content column. */
+    .mc-align-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      text-align: right;
+    }
+    @media (max-width: 640px) {
+      .mc-align-right { align-items: flex-start; text-align: left; }
+    }
+
+    /* Latex Films section — diffusing/crosslinking molecule scene, full
+       bleed across the whole section, with the summary text floating on
+       top in a paper-colored panel (right-aligned, matching the site's
+       alternating rhythm) rather than sitting in its own column. */
+    .films-scene-grid {
+      position: relative;
+      width: 100%;
+      height: calc(100vh - 140px);
+    }
+    .films-scene-canvas {
+      /* Full-bleed breakout — .films-scene-grid sits inside the section's
+         content-max-width column, but the scene itself should span the
+         whole section edge-to-edge, matching the grey band behind it,
+         not just the width of the centered text column. */
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 100vw;
+      margin-left: -50vw;
+      overflow: hidden;
+      /* No fill — the section's own --paper-2 band shows through, so the
+         molecule scene reads as the section's background rather than a
+         separate white panel sitting on top of it. */
+      background: transparent;
+    }
+    .films-scene-canvas canvas { display: block; cursor: pointer; }
+    .films-scene-overlay {
+      position: absolute;
+      right: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 1;
+      max-width: 26rem;
+      padding: var(--space-5);
+      /* No visible background here, but the box still occupies real
+         space and was silently swallowing clicks on any molecule
+         drifting underneath it. Let clicks pass through to the canvas by
+         default, and re-enable them only on the actual interactive
+         element (the button link). */
+      pointer-events: none;
+    }
+    .films-scene-overlay .btn {
+      pointer-events: auto;
+    }
+    @media (max-width: 640px) {
+      .films-scene-overlay {
+        position: static;
+        transform: none;
+        max-width: none;
+        padding: var(--space-4) var(--space-4) 0;
+        background: none;
+      }
+    }
+    /* A white duplicate of the heading/paragraph sits exactly on top of
+       the normal (black) copy, clipped via an SVG clip-path whose circles
+       are synced every frame to the molecules' current positions (see the
+       films scene script) — so the text reads white only where a molecule
+       is actually passing behind it right now, and normal everywhere else. */
+    .films-text-stack {
+      position: relative;
+    }
+    /* Both copies get margin: 0 — the black one's default heading/paragraph
+       margin made the stack taller than its own content box, so the white
+       copy (stretched to fill the stack via inset: 0) was being stretched
+       across that extra space and rendering visibly offset from the black
+       text underneath it. Spacing between the stacks is restored below,
+       on the flex column itself instead of on each paragraph. */
+    .films-text-stack > * {
+      margin: 0;
+    }
+    .films-scene-overlay .mc-align-right {
+      gap: var(--space-3);
+    }
+    .films-text-white {
+      position: absolute;
+      inset: 0;
+      color: #FFFFFF;
+      pointer-events: none;
+    }
+
+    /* JS-driven section paging (see the script near the end of body) — the
+       sections are exactly one screen each; the "stuck until you scroll
+       enough" resistance is handled entirely in JS now, not via extra
+       height. Fully bypassed under reduced-motion (see the script), so
+       these just sit as plain full-height sections and scroll natively.
+       Full 100vh (not 100vh - header-h): goTo() in the paging script lands
+       sections flush at the true viewport top, with the sticky header
+       overlapping their top edge rather than sitting above it — so the
+       section itself needs the full screen height to reach the bottom. */
+    .snap-section {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+    }
+    .snap-section > * { width: 100%; }
+
+    /* Section dot nav — hairline pill, fixed to the right edge. Hidden
+       until the first research-area section is reached, filled dot marks
+       the section currently in view. */
+    .section-nav {
+      position: fixed;
+      right: var(--space-4);
+      top: 50%;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: var(--space-3);
+      padding: var(--space-3) 0.55rem;
+      border-radius: 999px;
+      border: var(--border-hairline);
+      background: var(--paper);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+      z-index: 40;
+    }
+    .section-nav.is-visible {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+    }
+    .section-nav__dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      border: 1.5px solid var(--mute);
+      background: none;
+      padding: 0;
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+      transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+    }
+    .section-nav__dot:hover { border-color: var(--ink); }
+    .section-nav__dot:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+    .section-nav__dot.is-active {
+      background: var(--ink);
+      border-color: var(--ink);
+      transform: scale(1.2);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .section-nav, .section-nav__dot { transition: none; }
+    }
+    @media (max-width: 700px) {
+      .section-nav { display: none; }
+    }
+  </style>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
 
+  <nav class="section-nav" id="sectionNav" aria-label="Research area sections">
+    <button class="section-nav__dot" data-target="mass-cytometry" aria-label="Jump to Mass cytometry"></button>
+    <button class="section-nav__dot" data-target="films" aria-label="Jump to Latex films"></button>
+    <button class="section-nav__dot" data-target="cncs" aria-label="Jump to Cellulose nanocrystals"></button>
+  </nav>
+
   <header class="site-header">
     <div class="site-header__inner">
-      <a class="nav-wordmark" href="index.html">⟦ Winnik Group ⟧<span class="nav-wordmark__n">n</span></a>
+      <a class="nav-wordmark" href="index.html">
+        <svg class="nav-wordmark__icon" viewBox="0 0 130 90" width="130" height="90" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linejoin="round">
+          <g transform="translate(28,20)">
+            <polygon points="0,-18 15.59,-9 15.59,9 0,18 -15.59,9 -15.59,-9" />
+            <polygon points="0,-18 15.59,-9 15.59,9 0,18 -15.59,9 -15.59,-9" transform="translate(20,34)" />
+            <polygon points="0,-18 15.59,-9 15.59,9 0,18 -15.59,9 -15.59,-9" transform="translate(40,0)" />
+            <polygon points="0,-18 15.59,-9 15.59,9 0,18 -15.59,9 -15.59,-9" transform="translate(60,34)" />
+            <polygon points="0,-18 15.59,-9 15.59,9 0,18 -15.59,9 -15.59,-9" transform="translate(80,0)" />
+          </g>
+        </svg>
+        <span>Winnik</span>
+      </a>
 
       <button class="nav-toggle" id="navToggle" aria-expanded="false" aria-controls="navLinks" aria-label="Toggle navigation menu">
         <span class="nav-toggle__bar"></span>
@@ -31,6 +236,7 @@
         <ul class="nav-links" id="navLinks">
           <li><a href="index.html">Home</a></li>
           <li><a href="research.html" aria-current="page">Research</a></li>
+          <li><a href="winnik.html">Winnik</a></li>
           <li><a href="people.html">People</a></li>
           <li><a href="publications.html">Publications</a></li>
           <li><a href="contact.html">Contact</a></li>
@@ -44,31 +250,1519 @@
       <p class="eyebrow-label">Research</p>
       <h1 class="page-intro__title">Research areas</h1>
       <p class="page-intro__subtitle">
-        Five active areas, each as an editorial row with a mono eyebrow
-        label — coming in a later build pass.
+        We have three active areas of research: Mass Cytometry, Polymer
+        Chemistry in Latex Films, and Cellulose Nanocrystals (CNCs). Though
+        they span different scopes, much of our work involves inter-project
+        collaboration between lab members. Scroll down to see some
+        interactive examples of our work!
       </p>
     </div>
-    <section class="placeholder-section">
+    <section class="placeholder-section snap-section" id="mass-cytometry">
+      <div class="mc-scene-grid">
+        <div>
+        <h2 class="section-preview__title">Mass Cytometry</h2>
+        <p class="placeholder-note">
+          Synthesizing and functionalizing polymers and nanoparticles as
+          "mass tags" for high-dimensional bioanalysis. These mass tags are
+          loaded with heavy metals that are uncommon in vivo, and
+          functionalized with antibodies specific to the target antigen.
+          Ionizing a cell sample treated with mass tags and passage through
+          a time-of-flight mass cytometry device reveals the relative
+          expression of many proteins at once, giving us a glimpse into the
+          cell's activity.
+        </p>
+        <a class="btn" href="mass-cytometry.html">Mass cytometry →</a>
+        </div>
+        <div class="mc-scene-canvas" id="mcScene">
+          <canvas id="mcCanvas"></canvas>
+        </div>
+      </div>
+    </section>
+    <section class="placeholder-section placeholder-section--band snap-section" id="films">
+      <div class="films-scene-grid">
+        <div class="films-scene-canvas" id="filmsScene">
+          <canvas id="filmsCanvas"></canvas>
+        </div>
+        <div class="films-scene-overlay">
+          <div class="mc-align-right">
+          <div class="films-text-stack">
+            <h2 class="section-preview__title">Polymer Chemistry in Latex Films</h2>
+            <h2 class="section-preview__title films-text-white" id="filmsTitleWhite" aria-hidden="true">Polymer Chemistry in Latex Films</h2>
+          </div>
+          <div class="films-text-stack">
+            <p class="placeholder-note">
+              Working closely with scientists at BASF, we are studying the
+              mechanisms behind how polymers diffuse across interfaces in
+              latex films. We do this through methods we developed based on
+              Fluorescence Resonance Energy Transfer (FRET), and use this
+              information to understand how various additives and chemical
+              properties affect film formation.
+            </p>
+            <p class="placeholder-note films-text-white" id="filmsBodyWhite" aria-hidden="true">
+              Working closely with scientists at BASF, we are studying the
+              mechanisms behind how polymers diffuse across interfaces in
+              latex films. We do this through methods we developed based on
+              Fluorescence Resonance Energy Transfer (FRET), and use this
+              information to understand how various additives and chemical
+              properties affect film formation.
+            </p>
+          </div>
+          <a class="btn" href="films.html">Latex films →</a>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="placeholder-section snap-section" id="cncs">
+      <div>
+      <h2 class="section-preview__title">Cellulose Nanocrystals (CNCs)</h2>
       <p class="placeholder-note">
-        Placeholder. Real content: mass cytometry, metal-chelating polymers,
-        mesoporous silica nanoparticles, latex film coatings, and rod-like
-        cellulose nanocrystals — one editorial row per area, image + heading
-        + verbatim description, alternating image side.
+        Made out of the most bioabundant polymer in the world, cellulose
+        nanocrystals are rod-shaped nanoparticles that are exceptionally
+        biocompatible, with low-toxicity. We are investigating how CNCs
+        can be surface-functionalized as a vehicle for both drug delivery
+        and imaging in cancer.
       </p>
+      <a class="btn" href="cncs.html">Cellulose nanocrystals →</a>
+      </div>
     </section>
   </main>
 
   <footer class="site-footer">
     <div class="site-footer__inner">
-      <span>&copy; Department of Chemistry, Faculty of Arts &amp; Science, University of Toronto</span>
-      <nav aria-label="Footer">
-        <a href="https://www.chemistry.utoronto.ca/">Department of Chemistry</a>
-        &middot;
-        <a href="https://www.utoronto.ca/">University of Toronto</a>
-      </nav>
+      <div class="site-footer__brand">
+      <a class="site-footer__logo" href="https://www.utoronto.ca/" aria-label="University of Toronto">
+        <svg viewBox="0 0 1200 754" xmlns="http://www.w3.org/2000/svg" width="1200" height="754">
+          <path fill-rule="evenodd" fill="currentColor" d="m696.71 187.02c2.54 0.01 5.28 1.02 8.29 3.04 2.47 1.66 6.08 3.47 8 4.03 1.92 0.55 8.9 1.41 15.5 1.92 6.6 0.51 63.52 0.93 126.5 0.93 62.97 0 120.12-0.41 127-0.92 6.87-0.51 14.52-1.65 17-2.54 2.47-0.9 5.74-2.72 7.25-4.05q2.75-2.43 6.5-2.47c2.06-0.03 4.25 0.53 4.85 1.25 0.61 0.71 2.08 6.01 3.27 11.79 1.19 5.77 4.36 21.3 7.05 34.5 2.69 13.2 4.7 24.45 4.47 25-0.23 0.55-2.22 2.01-4.41 3.25-2.19 1.24-4.54 2.25-5.23 2.25-0.69 0.01-2.09-2.36-3.11-5.25-1.02-2.89-3.29-8.4-5.04-12.25-1.75-3.85-5.19-9.18-7.64-11.85-2.45-2.66-5.81-5.68-7.46-6.7-1.65-1.02-5.7-2.79-9-3.95-3.3-1.15-10.28-2.76-15.5-3.57-7.1-1.1-18.74-1.47-46-1.45-20.08 0.01-38.08 0.44-40 0.95-1.92 0.52-4.17 1.71-5 2.66-1.11 1.27-1.56 4.7-1.73 13.31-0.13 6.38-0.98 42.2-1.89 79.6-1.09 44.79-1.45 82.17-1.06 109.5 0.33 22.82 1.07 47.12 1.64 54 0.57 6.87 1.52 16.55 2.12 21.5 0.6 4.95 1.78 12.15 2.63 16 0.84 3.85 2.33 8.58 3.29 10.5 1.13 2.25 3.5 4.45 6.63 6.17 2.68 1.47 8.47 3.58 12.87 4.68 4.4 1.11 12.95 2.71 19 3.55 6.05 0.85 11.31 1.89 11.69 2.32 0.37 0.43 0.37 3.56-0.69 13.13l-12-0.68c-6.6-0.37-39.45-0.63-73-0.58-42.54 0.06-66.52 0.51-97.46 2.91l-1.09-5.5c-0.6-3.02-0.83-6.06-0.52-6.75 0.31-0.69 1.58-1.44 2.82-1.68 1.24-0.24 8.77-1.33 16.75-2.43 7.97-1.1 18.55-3.17 23.5-4.6 4.95-1.44 10.76-3.83 12.91-5.32 2.15-1.5 4.73-4.3 5.72-6.22 1.01-1.97 2.25-7.66 2.81-13 0.55-5.23 1.46-21.88 2.02-37 0.55-15.13 1.29-51.8 1.63-81.5 0.37-32.87 0.16-69.65-0.54-94-0.64-22-1.7-48.62-2.35-59.16-0.66-10.54-1.43-19.39-1.7-19.67-0.28-0.28-6.58-1-14-1.59-7.42-0.6-23.63-1.08-36-1.08-12.38 0-26.55 0.5-31.5 1.11-4.95 0.61-12.38 1.96-16.5 3-4.13 1.05-10.42 3.33-14 5.07-4.14 2.01-8.9 5.55-13.11 9.74-5.1 5.09-7.64 8.73-11.2 16.08-2.53 5.23-4.84 9.84-5.14 10.25-0.3 0.41-2.57-0.49-5.04-2-2.48-1.51-4.73-3.31-5-4-0.28-0.69-0.07-2.26 0.46-3.5 0.54-1.24 5.88-15.53 11.88-31.75 6-16.23 11.62-31.19 12.49-33.25 1.43-3.4 1.93-3.75 5.37-3.73zm-376.71 8.24c9.62-0.03 18.62 0.25 20 0.63 2.44 0.68 2.5 0.92 2.5 19.61l-11 1.19c-6.05 0.66-13.7 1.7-17 2.33-3.3 0.62-8.25 2.13-11 3.37-2.75 1.23-6.69 3.89-8.75 5.92-2.06 2.03-4.65 5.49-5.75 7.69-1.1 2.2-2.88 7.26-3.97 11.25-1.08 3.99-2.42 10.85-2.98 15.25-0.56 4.4-1.52 21.73-2.13 38.5-0.64 17.44-0.91 54.7-0.65 87 0.38 47.27 0.74 58.21 2.18 67 0.96 5.77 2.82 14.21 4.14 18.75 1.33 4.54 4.05 11.51 6.05 15.5 2.01 3.99 4.82 9.05 6.25 11.25 1.44 2.2 5.32 6.7 8.63 10 3.32 3.3 8.72 7.78 12 9.95 3.29 2.17 8.9 5.26 12.48 6.87 3.57 1.61 10.55 3.96 15.5 5.22 4.95 1.26 14.62 2.82 21.5 3.46 7.26 0.69 17.32 0.9 24 0.52 6.32-0.36 16-1.35 21.5-2.19 5.5-0.84 13.6-2.67 18-4.05 4.4-1.38 11.15-4.08 15-6 3.85-1.91 10.15-5.87 14-8.79 3.85-2.91 8.85-7.48 11.1-10.14 2.26-2.67 5.83-7.55 7.93-10.85 2.11-3.3 5.06-8.7 6.55-12 1.49-3.3 3.89-9.6 5.32-14 1.44-4.4 3.51-12.27 4.6-17.5 1.1-5.23 2.65-14.68 3.45-21 0.8-6.32 1.97-20.27 2.6-31 0.72-12.31 0.97-38.49 0.68-71-0.37-40.95-0.81-53.85-2.14-63-0.92-6.32-2.3-14.2-3.06-17.5-0.76-3.3-2.4-8.7-3.65-12-1.25-3.3-3.65-7.49-5.33-9.32-1.68-1.83-5.3-4.14-8.05-5.14-2.75-1-8.26-2.32-12.25-2.93-3.99-0.61-11.19-1.09-16-1.07-5.9 0.03-9.16-0.37-10.01-1.25-0.88-0.9-1.14-3.97-0.87-10.29 0.35-8.08 0.58-8.98 2.26-8.81 1.03 0.1 21.22 0.46 44.87 0.8 23.65 0.33 54.02 0.22 67.5-0.24 13.47-0.46 24.86-0.6 25.3-0.3 0.44 0.3 0.44 4.59-0.8 18.49l-10.5 1.17c-5.78 0.64-12.53 1.7-15 2.36-2.48 0.66-6.41 2.28-8.75 3.61-2.34 1.33-5.33 4.11-6.66 6.17-1.32 2.06-2.9 6.11-3.5 9-0.63 3.02-1.51 28.29-2.07 59.5-0.54 29.84-1.23 60.32-1.55 67.75-0.31 7.43-1.02 20.7-1.56 29.5-0.55 8.8-1.66 21.85-2.47 29-0.81 7.15-2.38 18.18-3.49 24.5-1.11 6.32-3.35 16.56-4.98 22.75-1.63 6.19-4.36 14.74-6.07 19-1.7 4.26-4.47 10.45-6.14 13.75-1.67 3.3-4.85 8.7-7.07 12-2.22 3.3-7.45 9.53-11.61 13.84-4.17 4.32-11.18 10.26-15.58 13.2-4.4 2.95-12.28 7.21-17.5 9.48-5.23 2.26-14.45 5.43-20.5 7.02-6.05 1.6-15.28 3.58-20.5 4.4-5.23 0.82-16.48 2.01-25 2.66-8.86 0.67-22.35 0.92-31.5 0.57-8.8-0.33-21.4-1.31-28-2.17-6.6-0.87-16.73-2.73-22.5-4.14-5.78-1.4-14.33-4.02-19-5.82-4.68-1.79-10.98-4.51-14-6.04-3.03-1.53-8.65-4.9-12.5-7.49-3.85-2.59-9.93-7.59-13.51-11.11-3.58-3.52-7.85-8.09-9.5-10.15-1.64-2.06-4.69-6.56-6.76-10-2.08-3.44-5.18-9.63-6.88-13.75-1.71-4.13-4.13-11.55-5.38-16.5-1.25-4.95-2.8-14.18-3.45-20.5-0.98-9.68-0.76-21.94 1.41-77.5 2.22-56.54 2.44-69.3 1.57-89-0.56-12.65-1.69-28.74-2.51-35.75-0.82-7.01-2.22-16.01-3.11-20-0.9-3.99-2.47-8.94-3.5-11-1.04-2.06-3.34-4.52-5.13-5.47-2.59-1.37-6.6-1.79-19.75-2.09-9.08-0.2-16.82-0.66-17.21-1.03-0.4-0.36-0.96-4.82-1.79-19.16l18.25-0.54c10.04-0.29 40.52-0.89 67.75-1.34 27.22-0.44 57.37-0.83 67-0.86zm294.5 145.09c8.08 0.27 12.46 0.93 16.5 2.47 3.02 1.16 8.18 4.03 11.47 6.39 3.28 2.36 7.91 6.99 10.3 10.29 2.39 3.3 5.22 8.36 6.29 11.25 1.07 2.89 2.39 8.18 2.94 11.75 0.67 4.37 0.67 8.71-0.02 13.25-0.6 3.98-2.52 9.83-4.66 14.25-2.5 5.14-5.56 9.39-9.75 13.5-3.35 3.3-8.79 7.44-12.09 9.19-3.29 1.76-8.91 3.89-12.48 4.74-3.58 0.85-9.2 1.55-12.5 1.56-3.3 0.01-8.7-0.69-12-1.55-3.3-0.86-8.64-3-11.87-4.75-3.23-1.76-8.3-5.78-11.25-8.94-2.96-3.16-6.51-8-7.88-10.75-1.38-2.75-3.18-7.59-4.01-10.75-0.82-3.16-1.5-9.24-1.5-13.5q0.01-7.75 2.09-14c1.14-3.44 3.36-8.27 4.92-10.75 1.57-2.48 5.47-7.02 8.68-10.09 3.2-3.08 7.84-6.64 10.32-7.92 2.47-1.28 6.97-3.15 10-4.16 4.37-1.47 7.76-1.77 16.5-1.48zm-20 9.39c-2.2 1.15-5.44 3.59-7.2 5.42-1.75 1.84-4.43 6.04-5.95 9.34-2.19 4.77-2.84 7.85-3.15 15-0.26 6.11 0.14 11.25 1.26 16 0.91 3.85 3.06 9.93 4.78 13.5 1.73 3.57 4.29 7.8 5.7 9.4 1.41 1.59 3.68 3.97 5.06 5.28 1.37 1.31 4.97 3.6 8 5.08 3.5 1.72 7.68 2.84 11.5 3.1 3.75 0.25 7.88-0.19 11-1.17 3.09-0.97 6.73-3.22 9.55-5.88 2.5-2.37 5.86-7.01 7.48-10.31 2.48-5.08 2.99-7.46 3.29-15.5 0.25-6.37-0.16-11.72-1.23-16.25-0.87-3.71-2.95-9.56-4.61-13-1.65-3.44-5.14-8.66-7.75-11.61-3.13-3.54-6.76-6.31-10.73-8.18-3.3-1.56-8.25-3.05-11-3.31-2.75-0.26-6.58-0.15-8.5 0.26-1.93 0.41-5.3 1.68-7.5 2.83zm156-9.6c0.63-0.09 0.87 3.65 0.65 10.11-0.21 6.27-0.8 10.54-1.5 10.98-0.63 0.41-1.6 0.6-2.15 0.43-0.55-0.17-1.79-1.96-2.75-3.98-0.96-2.02-2.99-4.6-4.5-5.73-1.51-1.13-4.33-2.47-6.25-2.97-1.93-0.51-6.65-1.22-10.5-1.58-3.85-0.37-9.59-0.38-18.5 0.6l0.5 36.5h14.17c13.76 0 14.25-0.07 16.75-2.5 1.42-1.38 2.69-3.4 2.83-4.5 0.16-1.25 1-2 2.25-2 1.87 0 2.02 0.76 2.28 12 0.21 8.53-0.08 12.55-1 13.9-0.7 1.05-1.84 1.61-2.53 1.25-0.69-0.36-1.48-2-1.75-3.65-0.28-1.65-1.51-3.63-2.75-4.39-1.24-0.77-5.18-1.89-8.75-2.5-3.58-0.6-9.99-1.1-14.25-1.1-7.23-0.01-7.78 0.14-8.24 2.24-0.26 1.24-0.49 8.66-0.5 16.5 0 7.84 0.44 15.37 0.99 16.75 0.55 1.37 1.9 2.95 3 3.5 1.1 0.55 4.81 1.58 8.25 2.3 5 1.03 6.25 1.67 6.25 3.17 0 1.8-1.11 1.88-23 1.81-16.03-0.05-23-0.41-23-1.18 0-0.6 0.1-1.44 0.23-1.85 0.12-0.41 1.47-1.05 3-1.41 1.52-0.36 3.8-1.49 5.06-2.5 2.08-1.67 2.37-3.06 3.21-15.34 0.51-7.43 0.94-22.27 0.94-33 0.01-10.73-0.42-22.43-0.96-26-0.56-3.69-1.74-7.28-2.73-8.3-0.96-0.99-3.49-2.12-5.62-2.5-2.13-0.39-4.04-1.04-4.25-1.45-0.21-0.41 0.63-1.25 1.87-1.86 1.59-0.79 9.93-0.93 28.25-0.47 14.3 0.36 30.05 0.25 35-0.24 4.95-0.5 9.45-0.96 10-1.04z"/>
+        </svg>
+      </a>
+      <span>&copy; <a href="https://www.chemistry.utoronto.ca/">Department of Chemistry</a>, Faculty of Arts &amp; Science</span>
+      </div>
+      <a href="https://www.utoronto.ca/">University of Toronto</a>
     </div>
   </footer>
 
   <script src="js/main.js"></script>
+  <script>
+(function () {
+  const sceneEl = document.getElementById("mcScene");
+  const canvas = document.getElementById("mcCanvas");
+  if (!sceneEl || !canvas) return;
+  const ctx = canvas.getContext("2d");
+
+  // Wait for web fonts before reading layout — the left column's text
+  // reflows once Inter/Archivo finish loading, which changes this grid
+  // row's height. Reading clientWidth/Height too early (before that reflow)
+  // computed a center point that didn't match the scene's final size,
+  // pushing the top of the lanthanide tray off-canvas.
+  document.fonts.ready.then(init);
+
+  function init() {
+  function resize() {
+    const w = sceneEl.clientWidth, h = sceneEl.clientHeight;
+    canvas.width = w * devicePixelRatio;
+    canvas.height = h * devicePixelRatio;
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  // Scaled-down version of the standalone MSN prototype (msn-prototype.html)
+  // to fit this smaller inline card instead of a full viewport.
+  const SCALE = 0.55;
+  const UNIT_A = [[0,0],[-7.84,9.15],[-15.68,18.29],[0,31.87],[-18.4,47.81]].map(([x,y]) => [x*SCALE, y*SCALE]);
+  const UNIT_B = [[0,0],[7.84,9.14],[15.68,18.29],[0,31.87],[18.4,47.80]].map(([x,y]) => [x*SCALE, y*SCALE]);
+  const DETAIL_UNITS = 4;
+
+  const referencePoints = [{ x: 0, y: 0, isJoint: true }];
+  {
+    let curX = 0, curY = 0;
+    for (let u = 0; u < DETAIL_UNITS; u++) {
+      const template = u % 2 === 0 ? UNIT_A : UNIT_B;
+      for (let j = 1; j < template.length; j++) {
+        referencePoints.push({
+          x: curX + template[j][0],
+          y: curY + template[j][1],
+          isJoint: j === template.length - 1,
+        });
+      }
+      curX += template[template.length - 1][0];
+      curY += template[template.length - 1][1];
+    }
+  }
+  let refArcLen = [0];
+  for (let i = 1; i < referencePoints.length; i++) {
+    const a = referencePoints[i - 1], b = referencePoints[i];
+    refArcLen.push(refArcLen[i - 1] + Math.hypot(b.x - a.x, b.y - a.y));
+  }
+  const REF_TOTAL_LEN = refArcLen[refArcLen.length - 1];
+  const referenceT = refArcLen.map((l) => l / REF_TOTAL_LEN);
+  const referenceOffset = referencePoints.map((p) => p.x);
+
+  const N_HINGES = 7;
+  const DAMPING = 0.6;
+  const CONSTRAINT_ITERATIONS = 8;
+  const LINK_STIFFNESS = 0.35;
+  const BEND_STIFFNESS = 0.035;
+  const SWAY_AMPLITUDE = 13;
+  const SWAY_SPEED = 0.018;
+  const SWAY_PULL = 0.05;
+  const BRUSH_RADIUS = 55;
+  const BRUSH_STRENGTH = 12;
+  const DRAG_FIELD_RADIUS = 160;
+  const DRAG_FIELD_STRENGTH = 0.65;
+  const LABEL_MASK_RADIUS = 5;
+  const SILANE_O_SPACING = 9;
+  const SILANE_BOND1_LEN = 12;
+  const SILANE_BOND2_LEN = 13;
+  const SILANE_SI_OFFSET = SILANE_BOND1_LEN + SILANE_BOND2_LEN;
+  const HINGE_SPACING = REF_TOTAL_LEN / (N_HINGES - 1);
+
+  const MSN_RADIUS = 88;
+  const NUM_CHAINS = 11;
+  // How far any chain's farthest tip reaches from the MSN's own center.
+  const MSN_REACH = MSN_RADIUS + SILANE_SI_OFFSET + HINGE_SPACING * (N_HINGES - 1);
+  // Shift the MSN right of the scene's own center, opening a clear strip
+  // on the left — between the text column and the MSN itself — for the
+  // mass-tags tray, rather than centering the MSN and having the tray
+  // compete with its own radiating chains for space. Falls back to
+  // whatever room is actually available if the canvas is narrower than
+  // ideal, but never lets the MSN's right edge run past the canvas.
+  const TRAY_CLEAR_WIDTH = 190;
+  const cx = Math.min(
+    sceneEl.clientWidth - MSN_REACH - 20,
+    MSN_REACH + TRAY_CLEAR_WIDTH
+  );
+  const cy = sceneEl.clientHeight / 2;
+
+  const ropes = [];
+  for (let k = 0; k < NUM_CHAINS; k++) {
+    const angle = (k / NUM_CHAINS) * Math.PI * 2 - Math.PI / 2;
+    const dirX = Math.cos(angle), dirY = Math.sin(angle);
+    const anchorX = cx + dirX * (MSN_RADIUS + SILANE_SI_OFFSET);
+    const anchorY = cy + dirY * (MSN_RADIUS + SILANE_SI_OFFSET);
+    const hinges = [];
+    for (let i = 0; i < N_HINGES; i++) {
+      const x = anchorX + dirX * i * HINGE_SPACING;
+      const y = anchorY + dirY * i * HINGE_SPACING;
+      hinges.push({ x, y, oldX: x, oldY: y, pinned: i === 0, restX: x, restY: y });
+    }
+    ropes.push({ hinges, dirX, dirY, anchorX, anchorY });
+  }
+
+  const LANTHANIDES = [
+    { label: "La", color: "#3B7DD8" },
+    { label: "Nd", color: "#3FA66B" },
+    { label: "Tb", color: "#D8483B" },
+    { label: "Ho", color: "#9B59D0" },
+    { label: "Yb", color: "#D89A2E" },
+  ];
+  const BALL_RADIUS = 9;
+  const BALL_SPACING = 27;
+  const BALL_WOBBLE_AMPLITUDE = 2;
+  const BALL_WOBBLE_SPEED = 0.00084;
+  // Grouped into a single labeled row, sitting in the clear strip between
+  // the text column and the MSN itself (see the cx shift above) — centered
+  // within that gap rather than under the MSN, and sitting below
+  // vertical-center for symmetry with the summary card's CTA button in
+  // the left column.
+  const TRAY_BOX_W = (LANTHANIDES.length - 1) * BALL_SPACING + 2 * (BALL_RADIUS + 20);
+  const MSN_LEFT_EDGE = cx - MSN_REACH;
+  const TRAY_X0 = MSN_LEFT_EDGE / 2 - TRAY_BOX_W / 2 + 20;
+  const TRAY_Y = sceneEl.clientHeight * 0.72;
+  const TRAY_LABEL_Y = TRAY_Y - 24;
+  const WAVE_SPEED = 100;
+  const WOBBLE_DURATION = 400;
+  const WOBBLE_AMPLITUDE = 1.1;
+
+  const balls = LANTHANIDES.map((ln, i) => ({
+    ...ln,
+    homeX: TRAY_X0 + i * BALL_SPACING, homeY: TRAY_Y,
+    x: TRAY_X0 + i * BALL_SPACING, y: TRAY_Y,
+    consumed: false,
+    hoverT: 0, // eased 0-1, drives the quiet hover scale/ring in drawLanthanides
+  }));
+  const colorWaves = [];
+  let draggedBall = -1;
+  let hoveredBall = -1;
+  const HOVER_EASE = 0.22;
+
+  let isDragging = false;
+  let pointerX = -9999, pointerY = -9999;
+  let prevPointerX = -9999, prevPointerY = -9999;
+  let hasPointer = false;
+  let time = 0;
+
+  function toLocal(evt) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: evt.clientX - rect.left, y: evt.clientY - rect.top };
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    const { x, y } = toLocal(e);
+    // Clear the inline hover cursor so the .dragging class's cursor:grabbing
+    // (lower specificity) isn't overridden by a stale inline value.
+    canvas.style.cursor = "";
+    for (let i = 0; i < balls.length; i++) {
+      const b = balls[i];
+      if (b.consumed) continue;
+      if (Math.hypot(b.x - x, b.y - y) < BALL_RADIUS + 6) {
+        draggedBall = i;
+        canvas.classList.add("dragging");
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+    }
+    isDragging = true;
+    pointerX = prevPointerX = x;
+    pointerY = prevPointerY = y;
+    canvas.classList.add("dragging");
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    const { x, y } = toLocal(e);
+    pointerX = x; pointerY = y;
+    hasPointer = true;
+    if (draggedBall >= 0) {
+      balls[draggedBall].x = x;
+      balls[draggedBall].y = y;
+    } else {
+      hoveredBall = -1;
+      for (let i = 0; i < balls.length; i++) {
+        const b = balls[i];
+        if (b.consumed) continue;
+        if (Math.hypot(b.x - x, b.y - y) < BALL_RADIUS + 6) { hoveredBall = i; break; }
+      }
+      canvas.style.cursor = hoveredBall >= 0 ? "pointer" : "grab";
+    }
+  });
+  canvas.addEventListener("pointerleave", () => {
+    hasPointer = false;
+    hoveredBall = -1;
+    canvas.style.cursor = "grab";
+  });
+  canvas.addEventListener("pointerup", () => {
+    if (draggedBall >= 0) {
+      const b = balls[draggedBall];
+      if (Math.hypot(b.x - cx, b.y - cy) < MSN_RADIUS) {
+        colorWaves.push({ x: b.x, y: b.y, color: b.color, startTime: performance.now() });
+        b.consumed = true;
+      } else {
+        b.x = b.homeX; b.y = b.homeY;
+      }
+      draggedBall = -1;
+    }
+    isDragging = false;
+    canvas.classList.remove("dragging");
+  });
+  canvas.addEventListener("pointercancel", () => {
+    if (draggedBall >= 0) {
+      balls[draggedBall].x = balls[draggedBall].homeX;
+      balls[draggedBall].y = balls[draggedBall].homeY;
+      draggedBall = -1;
+    }
+    isDragging = false;
+    canvas.classList.remove("dragging");
+  });
+
+  function updateRope(rope, ropeIndex, velX, velY) {
+    const hinges = rope.hinges;
+
+    for (let i = 0; i < hinges.length; i++) {
+      const p = hinges[i];
+      if (p.pinned) continue;
+
+      const vx = (p.x - p.oldX) * DAMPING;
+      const vy = (p.y - p.oldY) * DAMPING;
+      p.oldX = p.x; p.oldY = p.y;
+      p.x += vx;
+      p.y += vy;
+
+      const freedom = Math.pow(i / (hinges.length - 1), 1.6);
+
+      const targetX = p.restX + Math.sin(time + i * 0.9 + ropeIndex) * SWAY_AMPLITUDE * freedom;
+      const targetY = p.restY + Math.cos(time * 0.8 + i * 1.1 + ropeIndex) * SWAY_AMPLITUDE * 0.6 * freedom;
+      p.x += (targetX - p.x) * SWAY_PULL;
+      p.y += (targetY - p.y) * SWAY_PULL;
+
+      if (isDragging) {
+        const dx = p.x - pointerX, dy = p.y - pointerY;
+        const dist = Math.hypot(dx, dy);
+        if (dist < DRAG_FIELD_RADIUS) {
+          const falloff = 1 - dist / DRAG_FIELD_RADIUS;
+          p.x += velX * falloff * DRAG_FIELD_STRENGTH;
+          p.y += velY * falloff * DRAG_FIELD_STRENGTH;
+        }
+      } else if (hasPointer) {
+        const dx = p.x - pointerX, dy = p.y - pointerY;
+        const dist = Math.hypot(dx, dy);
+        if (dist < BRUSH_RADIUS && dist > 0.001) {
+          const push = (1 - dist / BRUSH_RADIUS) * BRUSH_STRENGTH;
+          p.x += (dx / dist) * push;
+          p.y += (dy / dist) * push;
+        }
+      }
+    }
+
+    for (let iter = 0; iter < CONSTRAINT_ITERATIONS; iter++) {
+      for (let i = 0; i < hinges.length - 1; i++) {
+        const a = hinges[i], b = hinges[i + 1];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const dist = Math.hypot(dx, dy) || 0.0001;
+        const diff = ((dist - HINGE_SPACING) / dist) * LINK_STIFFNESS;
+        const offX = dx * 0.5 * diff, offY = dy * 0.5 * diff;
+        if (!a.pinned) { a.x += offX; a.y += offY; }
+        if (!b.pinned) { b.x -= offX; b.y -= offY; }
+      }
+      for (let i = 1; i < hinges.length - 1; i++) {
+        const prev = hinges[i - 1], cur = hinges[i], next = hinges[i + 1];
+        if (cur.pinned) continue;
+        const midX = (prev.x + next.x) / 2;
+        const midY = (prev.y + next.y) / 2;
+        cur.x += (midX - cur.x) * BEND_STIFFNESS;
+        cur.y += (midY - cur.y) * BEND_STIFFNESS;
+      }
+    }
+  }
+
+  function sampleRope(hinges, t, hingeArcLen, hingeTotalLen) {
+    const target = t * hingeTotalLen;
+    let i = 0;
+    while (i < hingeArcLen.length - 2 && hingeArcLen[i + 1] < target) i++;
+    const a = hinges[i], b = hinges[i + 1];
+    const segLen = hingeArcLen[i + 1] - hingeArcLen[i] || 0.0001;
+    const segT = (target - hingeArcLen[i]) / segLen;
+    const x = a.x + (b.x - a.x) * segT;
+    const y = a.y + (b.y - a.y) * segT;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 0.0001;
+    return { x, y, tanX: dx / len, tanY: dy / len, normX: -dy / len, normY: dx / len };
+  }
+
+  const LATTICE_ATOMS = 26;
+  const LATTICE_INNER_RADIUS = MSN_RADIUS - 9;
+  const LATTICE_INNER_ATOMS = 25;
+
+  function drawLatticeRing(radius, atomCount, phase) {
+    const atomPositions = [];
+    for (let i = 0; i < atomCount; i++) {
+      const a = (i / atomCount) * Math.PI * 2 + phase;
+      atomPositions.push({
+        x: cx + Math.cos(a) * radius,
+        y: cy + Math.sin(a) * radius,
+        isSi: i % 2 === 0,
+      });
+    }
+
+    ctx.strokeStyle = "#0A0A0A";
+    ctx.lineWidth = 1.4;
+    ctx.lineCap = "butt";
+    ctx.beginPath();
+    atomPositions.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.stroke();
+
+    ctx.fillStyle = "#FFFFFF";
+    for (const p of atomPositions) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.isSi ? LABEL_MASK_RADIUS + 2 : LABEL_MASK_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = "#0A0A0A";
+    ctx.font = "600 6.5px Inter, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const p of atomPositions) {
+      ctx.fillText(p.isSi ? "Si" : "O", p.x, p.y);
+    }
+  }
+
+  function drawMSN() {
+    ctx.strokeStyle = "#E4E4E4";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, MSN_RADIUS, 0, Math.PI * 2);
+    ctx.stroke();
+
+    drawLatticeRing(MSN_RADIUS, LATTICE_ATOMS, 0);
+    drawLatticeRing(LATTICE_INNER_RADIUS, LATTICE_INNER_ATOMS, Math.PI / LATTICE_INNER_ATOMS);
+
+    const PORE_SPACING = 9;
+    const PORE_RADIUS = 2;
+    const poreFillRadius = LATTICE_INNER_RADIUS - 8;
+    const rowHeight = PORE_SPACING * Math.sin(Math.PI / 3);
+    const rows = Math.ceil(poreFillRadius / rowHeight) + 1;
+    const now = performance.now();
+    for (let row = -rows; row <= rows; row++) {
+      const y = row * rowHeight;
+      const xOffset = row % 2 !== 0 ? PORE_SPACING / 2 : 0;
+      const cols = Math.ceil(poreFillRadius / PORE_SPACING) + 1;
+      for (let col = -cols; col <= cols; col++) {
+        const x = col * PORE_SPACING + xOffset;
+        if (Math.hypot(x, y) > poreFillRadius) continue;
+        const dotX = cx + x, dotY = cy + y;
+
+        let color = "#0A0A0A";
+        let sinceReached = Infinity;
+        for (let w = colorWaves.length - 1; w >= 0; w--) {
+          const wave = colorWaves[w];
+          const dist = Math.hypot(dotX - wave.x, dotY - wave.y);
+          const reachedAt = wave.startTime + (dist / WAVE_SPEED) * 1000;
+          if (now >= reachedAt) {
+            color = wave.color;
+            sinceReached = now - reachedAt;
+            break;
+          }
+        }
+
+        let wobbleX = 0, wobbleY = 0;
+        if (sinceReached < WOBBLE_DURATION) {
+          const fade = 1 - sinceReached / WOBBLE_DURATION;
+          const seed = col * 12.9898 + row * 78.233;
+          const phase = (seed - Math.floor(seed)) * Math.PI * 2;
+          wobbleX = Math.sin(now * 0.02 + phase) * WOBBLE_AMPLITUDE * fade;
+          wobbleY = Math.cos(now * 0.017 + phase * 1.3) * WOBBLE_AMPLITUDE * fade;
+        }
+
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(dotX + wobbleX, dotY + wobbleY, PORE_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  function drawLanthanides() {
+    const now = performance.now();
+
+    // Grouping box behind the tray row, so it reads as one distinct UI
+    // element rather than loose balls sitting in the scene.
+    const boxX = TRAY_X0 - 20, boxY = TRAY_LABEL_Y - 12;
+    const boxW = (LANTHANIDES.length - 1) * BALL_SPACING + 2 * (BALL_RADIUS + 20);
+    const boxH = TRAY_Y - TRAY_LABEL_Y + BALL_RADIUS + 22;
+    ctx.fillStyle = "#F5F4F2";
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(boxX, boxY, boxW, boxH, 6) : ctx.rect(boxX, boxY, boxW, boxH);
+    ctx.fill();
+
+    ctx.fillStyle = "#6B6B6B";
+    ctx.font = "600 9px 'Source Code Pro', monospace";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText("MASS TAGS", TRAY_X0 - 6, TRAY_LABEL_Y);
+
+    ctx.font = "600 8px Inter, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (let i = 0; i < balls.length; i++) {
+      const b = balls[i];
+      if (b.consumed) continue;
+
+      let bx = b.x, by = b.y;
+      if (i !== draggedBall) {
+        const t = now * BALL_WOBBLE_SPEED + i * 17.3;
+        bx += (Math.sin(t) + Math.sin(t * 0.53 + i)) * BALL_WOBBLE_AMPLITUDE * 0.5;
+        by += (Math.cos(t * 0.71 + i * 2) + Math.sin(t * 0.37)) * BALL_WOBBLE_AMPLITUDE * 0.5;
+      }
+
+      // Quiet hover: ease toward a slightly larger radius plus a thin ink
+      // ring, rather than a jump-cut or anything glow/shadow-based.
+      const target = i === hoveredBall || i === draggedBall ? 1 : 0;
+      b.hoverT += (target - b.hoverT) * HOVER_EASE;
+      const r = BALL_RADIUS * (1 + 0.22 * b.hoverT);
+
+      if (b.hoverT > 0.01) {
+        ctx.strokeStyle = "#0A0A0A";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(bx, by, r + 3, 0, Math.PI * 2);
+        ctx.globalAlpha = b.hoverT * 0.6;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+
+      ctx.fillStyle = b.color;
+      ctx.beginPath();
+      ctx.arc(bx, by, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fillText(b.label, bx, by);
+    }
+  }
+
+  function drawRope(rope) {
+    const hinges = rope.hinges;
+    const hingeArcLen = [0];
+    for (let i = 1; i < hinges.length; i++) {
+      hingeArcLen.push(hingeArcLen[i - 1] + Math.hypot(hinges[i].x - hinges[i - 1].x, hinges[i].y - hinges[i - 1].y));
+    }
+    const hingeTotalLen = hingeArcLen[hingeArcLen.length - 1];
+
+    const mapped = referenceT.map((t, i) => {
+      const s = sampleRope(hinges, t, hingeArcLen, hingeTotalLen);
+      const offset = referenceOffset[i];
+      return { x: s.x + s.normX * offset, y: s.y + s.normY * offset };
+    });
+
+    ctx.strokeStyle = "#0A0A0A";
+    ctx.lineWidth = 1.2;
+    ctx.lineCap = "butt";
+    ctx.lineJoin = "miter";
+    ctx.beginPath();
+    mapped.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.stroke();
+
+    ctx.fillStyle = "#FFFFFF";
+    for (let i = 0; i < mapped.length; i++) {
+      if (referencePoints[i].isJoint && i > 0) {
+        ctx.beginPath();
+        ctx.arc(mapped[i].x, mapped[i].y, LABEL_MASK_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.fillStyle = "#0A0A0A";
+    ctx.font = "600 6.5px Inter, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (let i = 0; i < mapped.length; i++) {
+      if (referencePoints[i].isJoint && i > 0) {
+        ctx.fillText("O", mapped[i].x, mapped[i].y);
+      }
+    }
+  }
+
+  function drawSilane(rope) {
+    const { dirX, dirY } = rope;
+    const tangentX = -dirY, tangentY = dirX;
+    const surfaceX = cx + dirX * MSN_RADIUS, surfaceY = cy + dirY * MSN_RADIUS;
+    const siX = cx + dirX * (MSN_RADIUS + SILANE_SI_OFFSET);
+    const siY = cy + dirY * (MSN_RADIUS + SILANE_SI_OFFSET);
+
+    ctx.strokeStyle = "#0A0A0A";
+    ctx.lineWidth = 1.2;
+    ctx.lineCap = "butt";
+
+    const oPositions = [];
+    for (const off of [-1, 0, 1]) {
+      const baseX = surfaceX + tangentX * off * SILANE_O_SPACING;
+      const baseY = surfaceY + tangentY * off * SILANE_O_SPACING;
+      const oX = baseX + dirX * SILANE_BOND1_LEN;
+      const oY = baseY + dirY * SILANE_BOND1_LEN;
+
+      ctx.beginPath();
+      ctx.moveTo(baseX, baseY);
+      ctx.lineTo(oX, oY);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(oX, oY);
+      ctx.lineTo(siX, siY);
+      ctx.stroke();
+      oPositions.push({ x: oX, y: oY });
+    }
+
+    ctx.fillStyle = "#FFFFFF";
+    ctx.beginPath();
+    ctx.arc(siX, siY, LABEL_MASK_RADIUS + 2, 0, Math.PI * 2);
+    ctx.fill();
+    for (const p of oPositions) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, LABEL_MASK_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = "#0A0A0A";
+    ctx.font = "600 6.5px Inter, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("Si", siX, siY);
+    for (const p of oPositions) ctx.fillText("O", p.x, p.y);
+  }
+
+  function loop() {
+    time += SWAY_SPEED;
+    const velX = isDragging ? pointerX - prevPointerX : 0;
+    const velY = isDragging ? pointerY - prevPointerY : 0;
+    prevPointerX = pointerX; prevPointerY = pointerY;
+
+    ctx.clearRect(0, 0, sceneEl.clientWidth, sceneEl.clientHeight);
+    for (let r = 0; r < ropes.length; r++) updateRope(ropes[r], r, velX, velY);
+    drawMSN();
+    for (let r = 0; r < ropes.length; r++) {
+      drawRope(ropes[r]);
+      drawSilane(ropes[r]);
+    }
+    drawLanthanides();
+    if (isVisible) requestAnimationFrame(loop);
+  }
+
+  // Pause the whole simulation (physics + drawing) while this scene is
+  // scrolled out of view — otherwise it keeps running full-tilt even from
+  // the footer, burning CPU/battery for a canvas nobody can see.
+  let isVisible = true;
+  new IntersectionObserver(
+    ([entry]) => {
+      const wasVisible = isVisible;
+      isVisible = entry.isIntersecting;
+      if (isVisible && !wasVisible) loop(); // resume the rAF chain
+    },
+    { threshold: 0 }
+  ).observe(sceneEl);
+
+  loop();
+  } // end init()
+})();
+  </script>
+
+  <script>
+(function () {
+  const sceneEl = document.getElementById("filmsScene");
+  const canvas = document.getElementById("filmsCanvas");
+  if (!sceneEl || !canvas) return;
+  const ctx = canvas.getContext("2d");
+
+  // Same font-loading-timing guard as the Mass Cytometry scene — the grid
+  // row's height can still shift once Inter/Archivo finish loading, even
+  // though this canvas doesn't render any text itself.
+  document.fonts.ready.then(init);
+
+  function init() {
+  function resize() {
+    const w = sceneEl.clientWidth, h = sceneEl.clientHeight;
+    canvas.width = w * devicePixelRatio;
+    canvas.height = h * devicePixelRatio;
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  // ---- Latex film molecules: diffuse freely until clicked, then
+  // crosslink into a fixed mesh and stop; clicking anywhere while
+  // crosslinked breaks it and diffusion resumes. ----
+  // Lower count than the plain-circle version (was 55) — each particle now
+  // has a much bigger visual footprint (core + hexagonal shell), so fewer
+  // of them read as comfortably full rather than crowded.
+  const MOLECULE_COUNT = 38; // 32 * 1.2
+  const MOLECULE_RADIUS = 20;    // core
+  const SHELL_RADIUS = MOLECULE_RADIUS * 1.7;
+  const DASH_WIDTH = 4;
+  const DRIFT_MAX_SPEED = 0.345; // px/frame — slow, ambient drift (0.3 * 1.15)
+  const DRIFT_JITTER = 0.0207;   // px/frame^2 — small random nudge each
+                                  // frame, the source of the "Brownian"
+                                  // wander rather than straight-line drift
+  const K_NEIGHBORS = 4;         // interlink bridges per molecule
+  const POP_DURATION = 420;      // ms — molecule bounce on cure
+  const RING_DURATION = 500;     // ms — expanding ring flash at click
+  const DELAY_PER_HOP = 90;      // ms — stagger between hops of the
+                                  // propagating interlink reveal, seeded
+                                  // from whichever molecule was clicked
+  const REVEAL_DURATION = 220;   // ms — how long each bridge takes to grow
+                                  // once the wave reaches it
+
+  function rand(min, max) { return min + Math.random() * (max - min); }
+
+  const molecules = [];
+  function seedMolecules() {
+    molecules.length = 0;
+    const w = sceneEl.clientWidth, h = sceneEl.clientHeight;
+    for (let i = 0; i < MOLECULE_COUNT; i++) {
+      molecules.push({
+        x: rand(SHELL_RADIUS, Math.max(SHELL_RADIUS, w - SHELL_RADIUS)),
+        y: rand(SHELL_RADIUS, Math.max(SHELL_RADIUS, h - SHELL_RADIUS)),
+        vx: rand(-DRIFT_MAX_SPEED, DRIFT_MAX_SPEED),
+        vy: rand(-DRIFT_MAX_SPEED, DRIFT_MAX_SPEED),
+      });
+    }
+  }
+  seedMolecules();
+
+  let cured = false;
+  let links = [];
+  let cureAnimStart = 0;
+  let ring = null; // { x, y, start }
+
+  // Damped oscillation around 1 — starts and ends at rest, overshoots in
+  // between. Used for the "satisfying pop" bounce on cure, applied to all
+  // molecules together (a synchronized gel-set, not a rippling wave —
+  // kept simple on purpose).
+  function popBounce(t) {
+    if (t <= 0 || t >= 1) return 1;
+    const decay = Math.exp(-6 * t);
+    return 1 + 0.5 * decay * Math.sin(t * Math.PI * 4);
+  }
+
+  function computeLinks() {
+    const result = [];
+    const seen = new Set();
+    for (let i = 0; i < molecules.length; i++) {
+      const dists = [];
+      for (let j = 0; j < molecules.length; j++) {
+        if (i === j) continue;
+        const dx = molecules[i].x - molecules[j].x;
+        const dy = molecules[i].y - molecules[j].y;
+        dists.push({ j, d: dx * dx + dy * dy });
+      }
+      dists.sort((a, b) => a.d - b.d);
+      for (let k = 0; k < Math.min(K_NEIGHBORS, dists.length); k++) {
+        const j = dists[k].j;
+        const key = i < j ? i + "_" + j : j + "_" + i;
+        if (!seen.has(key)) { seen.add(key); result.push({ a: i, b: j }); }
+      }
+    }
+    return result;
+  }
+
+  // Hop distance from `originIndex` through the link graph (BFS) — used so
+  // the interlink reveal travels outward along the actual bonds from
+  // whichever molecule was clicked, rather than every bridge appearing at
+  // once.
+  function computeHopDistances(originIndex, linksList) {
+    const adjacency = new Map();
+    for (const { a, b } of linksList) {
+      if (!adjacency.has(a)) adjacency.set(a, []);
+      if (!adjacency.has(b)) adjacency.set(b, []);
+      adjacency.get(a).push(b);
+      adjacency.get(b).push(a);
+    }
+    const dist = new Map([[originIndex, 0]]);
+    const queue = [originIndex];
+    while (queue.length) {
+      const cur = queue.shift();
+      for (const next of adjacency.get(cur) || []) {
+        if (!dist.has(next)) { dist.set(next, dist.get(cur) + 1); queue.push(next); }
+      }
+    }
+    return dist;
+  }
+
+  // Annotates each link with a reveal `delay` (from its nearer endpoint's
+  // hop distance) and which endpoint is `near`/`far`, so the bridge can be
+  // drawn growing from near to far once its delay has elapsed.
+  function scheduleLinkReveal(originIndex, linksList) {
+    const hopDist = computeHopDistances(originIndex, linksList);
+    const fallback = Math.max(0, ...Array.from(hopDist.values())) + 1;
+    for (const link of linksList) {
+      const da = hopDist.has(link.a) ? hopDist.get(link.a) : fallback;
+      const db = hopDist.has(link.b) ? hopDist.get(link.b) : fallback;
+      const aIsNear = da <= db;
+      link.near = aIsNear ? link.a : link.b;
+      link.far = aIsNear ? link.b : link.a;
+      link.delay = Math.min(da, db) * DELAY_PER_HOP;
+    }
+  }
+
+  // Shared by the shell fill/rim and the corner-to-corner bridges below, so
+  // they always agree on where a hexagon's vertices actually are.
+  const HEX_VERTEX_ANGLES = [0, 1, 2, 3, 4, 5].map((i) => (Math.PI / 3) * i - Math.PI / 2);
+
+  // The vertex of a hexagon (at cx,cy) that most directly faces
+  // `towardAngle` — used to pick which corner of each particle's shell
+  // should bridge to its neighbor, rather than bridging through the
+  // centers (real particles interdiffuse where their shells actually
+  // touch, not through their middles).
+  function facingVertex(cx, cy, radius, towardAngle) {
+    let best = HEX_VERTEX_ANGLES[0], bestDiff = Infinity;
+    for (const va of HEX_VERTEX_ANGLES) {
+      const diff = Math.abs(Math.atan2(Math.sin(va - towardAngle), Math.cos(va - towardAngle)));
+      if (diff < bestDiff) { bestDiff = diff; best = va; }
+    }
+    return [cx + radius * Math.cos(best), cy + radius * Math.sin(best)];
+  }
+
+  // Solid fill for the shell region — real core-shell particles have no
+  // physical gap between the two polymer layers (the shell is grown
+  // directly onto the core during synthesis), so filling this in is
+  // actually the more accurate representation, not less. Lighter than the
+  // core/rim (both ink) but still dark enough to keep the white text
+  // reveal legible against it.
+  function drawShellFill(cx, cy, radius) {
+    ctx.fillStyle = "#808080";
+    const verts = HEX_VERTEX_ANGLES.map((angle) => [cx + radius * Math.cos(angle), cy + radius * Math.sin(angle)]);
+    ctx.beginPath();
+    verts.forEach((v, i) => (i === 0 ? ctx.moveTo(v[0], v[1]) : ctx.lineTo(v[0], v[1])));
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // The segmented "shell" rim — a hexagon outline made of short dashes
+  // with gaps at each vertex and mid-edge, matching the core-shell
+  // particle diagrams this is based on.
+  function drawShellRim(cx, cy, radius) {
+    ctx.strokeStyle = "#0A0A0A";
+    ctx.lineWidth = DASH_WIDTH;
+    ctx.lineCap = "round";
+    const verts = HEX_VERTEX_ANGLES.map((angle) => [cx + radius * Math.cos(angle), cy + radius * Math.sin(angle)]);
+    const segs = [[0.1, 0.42], [0.58, 0.9]];
+    for (let i = 0; i < 6; i++) {
+      const a = verts[i], b = verts[(i + 1) % 6];
+      const dx = b[0] - a[0], dy = b[1] - a[1];
+      for (const [t0, t1] of segs) {
+        ctx.beginPath();
+        ctx.moveTo(a[0] + dx * t0, a[1] + dy * t0);
+        ctx.lineTo(a[0] + dx * t1, a[1] + dy * t1);
+        ctx.stroke();
+      }
+    }
+  }
+
+  function cure(x, y, hitIndex) {
+    cured = true;
+    links = computeLinks();
+    scheduleLinkReveal(hitIndex, links);
+    cureAnimStart = performance.now();
+    ring = { x, y, start: cureAnimStart };
+  }
+
+  function breakLinks() {
+    cured = false;
+    links = [];
+    // Fresh small random velocities so released molecules don't all drift
+    // off in whatever direction they happened to freeze facing.
+    for (const m of molecules) {
+      m.vx = rand(-DRIFT_MAX_SPEED, DRIFT_MAX_SPEED);
+      m.vy = rand(-DRIFT_MAX_SPEED, DRIFT_MAX_SPEED);
+    }
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+
+    if (cured) { breakLinks(); return; }
+
+    // Curing requires clicking on (near) a molecule — breaking, per the
+    // above, works anywhere on the canvas. Tolerance matches the shell now
+    // (not just the core), since that's the visible clickable area.
+    let hit = -1, hitD = (SHELL_RADIUS + 10) * (SHELL_RADIUS + 10);
+    for (let i = 0; i < molecules.length; i++) {
+      const dx = molecules[i].x - x, dy = molecules[i].y - y;
+      const d = dx * dx + dy * dy;
+      if (d < hitD) { hitD = d; hit = i; }
+    }
+    if (hit >= 0) cure(x, y, hit);
+  });
+
+  function updateDiffusion() {
+    const w = sceneEl.clientWidth, h = sceneEl.clientHeight;
+    for (const m of molecules) {
+      m.vx += rand(-DRIFT_JITTER, DRIFT_JITTER);
+      m.vy += rand(-DRIFT_JITTER, DRIFT_JITTER);
+      const speed = Math.hypot(m.vx, m.vy);
+      if (speed > DRIFT_MAX_SPEED) {
+        m.vx = (m.vx / speed) * DRIFT_MAX_SPEED;
+        m.vy = (m.vy / speed) * DRIFT_MAX_SPEED;
+      }
+      m.x += m.vx;
+      m.y += m.vy;
+      if (m.x < SHELL_RADIUS) { m.x = SHELL_RADIUS; m.vx *= -1; }
+      if (m.x > w - SHELL_RADIUS) { m.x = w - SHELL_RADIUS; m.vx *= -1; }
+      if (m.y < SHELL_RADIUS) { m.y = SHELL_RADIUS; m.vy *= -1; }
+      if (m.y > h - SHELL_RADIUS) { m.y = h - SHELL_RADIUS; m.vy *= -1; }
+    }
+  }
+
+  function draw() {
+    const w = sceneEl.clientWidth, h = sceneEl.clientHeight;
+    ctx.clearRect(0, 0, w, h);
+    const now = performance.now();
+
+    let bounce = 1;
+    if (cured) {
+      const popT = Math.min(1, (now - cureAnimStart) / POP_DURATION);
+      bounce = popBounce(popT);
+
+      // Each bridge grows from its "near" corner (closer, by hop count, to
+      // whichever molecule was clicked) toward its "far" corner, only once
+      // that bridge's delay has elapsed — so the interlink mesh reads as
+      // propagating outward along the actual bonds, not snapping in at
+      // once.
+      ctx.strokeStyle = "#0A0A0A";
+      ctx.lineWidth = 1.2;
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      for (const link of links) {
+        const localT = Math.max(0, Math.min(1, (now - cureAnimStart - link.delay) / REVEAL_DURATION));
+        if (localT <= 0) continue;
+        const mNear = molecules[link.near], mFar = molecules[link.far];
+        const angle = Math.atan2(mFar.y - mNear.y, mFar.x - mNear.x);
+        const pNear = facingVertex(mNear.x, mNear.y, SHELL_RADIUS * bounce, angle);
+        const pFar = facingVertex(mFar.x, mFar.y, SHELL_RADIUS * bounce, angle + Math.PI);
+        const px = pNear[0] + (pFar[0] - pNear[0]) * localT;
+        const py = pNear[1] + (pFar[1] - pNear[1]) * localT;
+        ctx.moveTo(pNear[0], pNear[1]);
+        ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    if (ring) {
+      const rt = (now - ring.start) / RING_DURATION;
+      if (rt >= 1) {
+        ring = null;
+      } else {
+        ctx.strokeStyle = "#0A0A0A";
+        ctx.globalAlpha = 1 - rt;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(ring.x, ring.y, SHELL_RADIUS + rt * 90, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // Core-shell particle: a lighter grey shell fill (no gap between core
+    // and shell — real particles are one continuous solid, the shell
+    // grown directly onto the core during synthesis), the dashed shell
+    // rim, and the core — core and rim share the same (ink) color so
+    // there are only two tones in play, not three, keeping the overlap
+    // with the overlay text legible.
+    for (const m of molecules) {
+      drawShellFill(m.x, m.y, SHELL_RADIUS * bounce);
+      drawShellRim(m.x, m.y, SHELL_RADIUS * bounce);
+      ctx.fillStyle = "#0A0A0A";
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, MOLECULE_RADIUS * bounce, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    return bounce;
+  }
+
+  // ---- White "obscured" text reveal ----------------------------------
+  // A white duplicate of the heading and paragraph sits exactly on top of
+  // the normal black copy (see .films-text-white), clipped through an SVG
+  // <clipPath> whose circles are repositioned every frame to match the
+  // molecules currently overlapping that specific element — so text reads
+  // white only where a molecule is actually passing behind it right now.
+  // Each element gets its own clipPath because clip-path circle
+  // coordinates are local to the element they're applied to.
+  function setupTextClip(id, whiteEl) {
+    if (!whiteEl) return null;
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("width", "0");
+    svg.setAttribute("height", "0");
+    svg.style.position = "absolute";
+    const clipPath = document.createElementNS(svgNS, "clipPath");
+    clipPath.setAttribute("id", id);
+    clipPath.setAttribute("clipPathUnits", "userSpaceOnUse");
+    const circles = [];
+    for (let i = 0; i < MOLECULE_COUNT; i++) {
+      const c = document.createElementNS(svgNS, "circle");
+      c.setAttribute("r", "0");
+      clipPath.appendChild(c);
+      circles.push(c);
+    }
+    svg.appendChild(clipPath);
+    sceneEl.appendChild(svg);
+    whiteEl.style.clipPath = `url(#${id})`;
+    return { el: whiteEl, circles };
+  }
+
+  const textClips = [
+    setupTextClip("filmsTitleClip", document.getElementById("filmsTitleWhite")),
+    setupTextClip("filmsBodyClip", document.getElementById("filmsBodyWhite")),
+  ].filter(Boolean);
+
+  // The canvas and the text panel scroll together as one unit — their
+  // relative offset only changes on resize (or a font-load reflow), never
+  // during normal scrolling or animation. Caching it here means
+  // updateTextClips() no longer has to force a layout read 60 times a
+  // second just to reposition the clip circles.
+  function refreshTextClipOffsets() {
+    if (!textClips.length) return;
+    const canvasRect = canvas.getBoundingClientRect();
+    for (const clip of textClips) {
+      const rect = clip.el.getBoundingClientRect();
+      clip.dx = canvasRect.left - rect.left;
+      clip.dy = canvasRect.top - rect.top;
+    }
+  }
+  refreshTextClipOffsets();
+  window.addEventListener("resize", refreshTextClipOffsets);
+
+  function updateTextClips(bounce) {
+    if (!textClips.length) return;
+    for (const clip of textClips) {
+      for (let i = 0; i < molecules.length; i++) {
+        const m = molecules[i];
+        const c = clip.circles[i];
+        c.setAttribute("cx", m.x + clip.dx);
+        c.setAttribute("cy", m.y + clip.dy);
+        c.setAttribute("r", SHELL_RADIUS * bounce);
+      }
+    }
+  }
+
+  function loop() {
+    if (!cured) updateDiffusion();
+    const bounce = draw();
+    updateTextClips(bounce);
+    if (isVisible) requestAnimationFrame(loop);
+  }
+
+  // Same visibility-gated pausing as the Mass Cytometry scene — no point
+  // running diffusion/drawing/text-clip updates while this section is
+  // scrolled out of view.
+  let isVisible = true;
+  new IntersectionObserver(
+    ([entry]) => {
+      const wasVisible = isVisible;
+      isVisible = entry.isIntersecting;
+      if (isVisible && !wasVisible) loop();
+    },
+    { threshold: 0 }
+  ).observe(sceneEl);
+
+  loop();
+  } // end init()
+})();
+  </script>
+
+  <script>
+(function () {
+  const nav = document.getElementById("sectionNav");
+  const intro = document.querySelector(".page-intro");
+  if (!nav || !intro) return;
+
+  const dots = Array.from(nav.querySelectorAll(".section-nav__dot"));
+  const sections = dots
+    .map((dot) => document.getElementById(dot.dataset.target))
+    .filter(Boolean);
+
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Deliberately NOT using scrollIntoView() here. site.css sets a global
+  // `scroll-padding-top` (so the sticky header never covers an anchor-link
+  // target elsewhere on the site) — scrollIntoView always respects that,
+  // landing sections ~80px below the true viewport top and leaving a
+  // visible sliver of plain page background between the header and the
+  // section's own background. Computing and setting the scroll position
+  // manually bypasses scroll-padding entirely (it only applies to
+  // scrollIntoView/CSS scroll-snap, not scrollTo), so sections land flush
+  // at the real top with the opaque sticky header simply overlapping the
+  // section's own background instead of exposing a gap behind it. This
+  // stays scoped to these three sections — the sitewide anchor-link
+  // behavior elsewhere is untouched.
+  function goTo(i) {
+    if (i < 0 || i >= sections.length) return;
+    const target = window.scrollY + sections[i].getBoundingClientRect().top;
+    window.scrollTo({ top: target, behavior: reduceMotion ? "auto" : "smooth" });
+  }
+
+  // Rest is genuinely rect.top === 0 now that goTo() bypasses
+  // scroll-padding-top — no correction needed.
+  function sectionOffset(index) {
+    return sections[index].getBoundingClientRect().top;
+  }
+
+  // Shared paging state — declared here (rather than inside the
+  // reduced-motion guard below) so the dot-nav click handler can always
+  // reference it safely, even when the drift/scroll/keydown listeners
+  // that normally drive it are skipped under reduced-motion.
+  const SETTLE_MAX_MS = 1500; // hard safety cap on how long we'll wait for
+                               // a landing to be detected before giving up
+                               // and treating it as arrived anyway — should
+                               // essentially never be hit in practice
+  let anchorIndex = null; // section currently at rest; null = outside
+                           // the paged sequence
+  let settling = false;
+
+  function atBoundary(index, direction) {
+    const next = index + direction;
+    return next < 0 || next >= sections.length;
+  }
+
+  // Waits for `sections[index]` to actually reach rest (top ≈ 0) before
+  // clearing `settling` and re-anchoring. A fixed timeout here previously
+  // guessed how long the native `scrollIntoView({behavior:"smooth"})`
+  // animation takes — but that duration isn't something we control, and
+  // when the guess fired early (animation still in flight), a new gesture
+  // starting right then would land the section a few pixels short of true
+  // rest. That residual was visible as a sliver of the previous section
+  // peeking in above the current one, and — because our resistance math
+  // is relative to the (wrongly nonzero) rest position — it also silently
+  // pre-loaded progress toward whichever section that residual leaned
+  // toward, making that direction feel like it took no effort at all.
+  function waitForArrival(index) {
+    const deadline = performance.now() + SETTLE_MAX_MS;
+    (function check() {
+      const arrived = Math.abs(sectionOffset(index)) < 1.5;
+      if (arrived || performance.now() >= deadline) {
+        settling = false;
+        anchorIndex = index;
+        return;
+      }
+      requestAnimationFrame(check);
+    })();
+  }
+
+  function commit(index, direction) {
+    if (atBoundary(index, direction)) return false;
+    const next = index + direction;
+    settling = true;
+    anchorIndex = null; // stop drift checks until the animation lands
+    goTo(next);
+    waitForArrival(next);
+    return true;
+  }
+
+  // Same settling/arrival tracking as commit() — a spring-back is still an
+  // animated scroll in flight, and without this, an opposing scroll/touch
+  // input arriving mid-animation gets resisted against a section that
+  // hasn't actually finished moving yet, which is what caused scrolling to
+  // occasionally get stuck.
+  function springBackTo(index) {
+    settling = true;
+    anchorIndex = null;
+    goTo(index);
+    waitForArrival(index);
+  }
+
+  dots.forEach((dot, i) =>
+    dot.addEventListener("click", () => {
+      settling = true;
+      anchorIndex = null;
+      goTo(i);
+      waitForArrival(i);
+    })
+  );
+
+  // Nav appears once the page-intro has scrolled out of view (i.e. the
+  // first research-area section has been reached), and hides again if the
+  // user scrolls back up to it.
+  const introObserver = new IntersectionObserver(
+    ([entry]) => nav.classList.toggle("is-visible", !entry.isIntersecting),
+    { threshold: 0 }
+  );
+  introObserver.observe(intro);
+
+  // Whichever section is most centered in the viewport gets the filled dot.
+  const sectionObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        const idx = sections.indexOf(entry.target);
+        if (idx === -1) return;
+        dots.forEach((d) => d.classList.remove("is-active"));
+        dots[idx].classList.add("is-active");
+      });
+    },
+    { threshold: 0.5 }
+  );
+  sections.forEach((s) => sectionObserver.observe(s));
+
+  // ---- JS-driven paging (replaces the earlier CSS scroll-snap) ----------
+  // Fully skipped under reduced-motion — native free scroll only.
+  if (reduceMotion) return;
+  //
+  // Design: a rubber-band drag. Wheel/touch input is intercepted and
+  // manually applied to real scroll position (via scrollBy), but each
+  // increment is damped by how close the section already is to the
+  // commit point — full-strength near rest, fading toward
+  // RESISTANCE_FLOOR as it nears SCROLL_THRESHOLD_PX. That's what gives
+  // the "harder to push the closer you get" feel, rather than a flat
+  // wall that just lets go at a fixed distance. Cross the threshold and
+  // the transition auto-completes; stop short and idling springs back.
+  // Sections outside a section's own drag zone (the intro above, the
+  // footer below) are never intercepted — native scroll only.
+
+  const SCROLL_THRESHOLD_PX = 90;   // real px of (damped) drift needed to
+                                     // commit to the next/previous section
+  const RESISTANCE_SCALE = 1.2;     // scales the whole resistance curve up
+                                     // by 20% (i.e. 20% less of each tick's
+                                     // input gets through at a given point
+                                     // in the drag)
+  const RESISTANCE_FLOOR = 0.34;    // minimum fraction of input that still
+                                     // gets through right at the edge — was
+                                     // 0.45, lowered by the same 20% so the
+                                     // floor stays consistent with the
+                                     // rest of the curve; still high enough
+                                     // that sustained scrolling reliably
+                                     // makes it across, not just
+                                     // asymptotically close
+  const SPRING_BACK_MS = 150;       // idle time after the last wheel/touch
+                                     // tick before an unfinished drag
+                                     // springs back. Needs to be short
+                                     // enough to read as immediate once you
+                                     // truly stop, but long enough to
+                                     // bridge the natural gap between
+                                     // individual ticks within one ongoing
+                                     // gesture (a physical mouse wheel's
+                                     // discrete notches in particular can
+                                     // land 60-100ms+ apart) — too short
+                                     // and the timer fires mid-gesture,
+                                     // springing back and wiping out
+                                     // progress mid-push, which is what
+                                     // made the resistance feel
+                                     // inconsistent and the curve
+                                     // disappear
+
+  let springTimer = null;
+
+  // Shared radius for both (re-)engaging a nearby section and letting go
+  // of it — wide enough that scrolling back toward a card from the intro
+  // or footer gets caught and resisted too, not just departing from rest.
+  const ZONE_RADIUS_PX = () => window.innerHeight * 0.6;
+
+  function findNearbySection() {
+    for (let i = 0; i < sections.length; i++) {
+      // The first section's engagement zone is wide enough to reach past
+      // its own top and into the "Research areas" heading above it. Never
+      // engage it while any part of the intro is still on screen, or the
+      // heading itself starts feeling gripped/resisted like a section —
+      // scrolling through the intro should stay completely native right
+      // up until mass-cytometry has actually scrolled into range.
+      if (i === 0 && intro.getBoundingClientRect().bottom > 0) continue;
+      if (Math.abs(sectionOffset(i)) < ZONE_RADIUS_PX()) return i;
+    }
+    return null;
+  }
+
+  // Bookkeeping, PLUS a safety net driven by real scroll position rather
+  // than wheel/touch ticks. Trackpad momentum scrolling can, on some
+  // browsers, continue as its own compositor-level animation that isn't
+  // fully stopped by preventDefault() on the wheel events we do see — so
+  // a hard flick can drift the page well past a section with none of our
+  // resistance/commit logic ever running, leaving it stranded off-rest
+  // with no spring-back. This listener watches actual scroll position
+  // and, once it's been idle a moment while off-rest, independently
+  // decides to commit (if far enough) or spring back — regardless of
+  // whether the drift came from a tick we handled ourselves.
+  let scrollSettleTimer = null;
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (settling) return;
+      if (anchorIndex === null) {
+        anchorIndex = findNearbySection();
+        return;
+      }
+      const offset = sectionOffset(anchorIndex);
+      if (Math.abs(offset) > ZONE_RADIUS_PX()) { anchorIndex = null; return; }
+
+      clearTimeout(scrollSettleTimer);
+      if (Math.abs(offset) <= 1.5) return; // already at rest, nothing to do
+      scrollSettleTimer = window.setTimeout(() => {
+        if (settling || anchorIndex === null) return;
+        const idx = anchorIndex;
+        const finalOffset = sectionOffset(idx);
+        if (Math.abs(finalOffset) <= 1.5) return; // settled on its own by now
+        const dir = finalOffset < 0 ? 1 : -1;
+        if (atBoundary(idx, dir)) {
+          // Drifted out toward the intro or footer, not toward another
+          // card — that's a legitimate exit from the sequence, not a
+          // stalled drag. Let it stand; don't drag them back.
+          anchorIndex = null;
+          return;
+        }
+        // This timer only fires after real input has gone quiet for a
+        // while — so if it's the one deciding, whatever crossed the
+        // threshold did so via native drift/momentum the resisted system
+        // never actually tracked, not via genuine active scrolling. Per
+        // the "only change pages at the actual boundary, not from
+        // residual momentum" rule, that never commits — always spring
+        // back, regardless of how far past the threshold it drifted.
+        springBackTo(idx);
+      }, SPRING_BACK_MS);
+    },
+    { passive: true }
+  );
+
+  anchorIndex = findNearbySection(); // in case the page loads mid-section
+
+  function applyResistedDelta(rawDelta, index) {
+    const beforeAbs = Math.abs(sectionOffset(index));
+    const t = Math.min(beforeAbs / SCROLL_THRESHOLD_PX, 1);
+    // Higher power = flatter (near-full-strength) at the start of the
+    // drag, with resistance only ramping up sharply near the threshold —
+    // rather than a quadratic curve that starts damping right away.
+    const factor = Math.max(1 - RESISTANCE_SCALE * t * t * t * t, RESISTANCE_FLOOR);
+    // Explicitly instant — site.css sets `scroll-behavior: smooth`
+    // globally (for anchor-link nav elsewhere on the site), which would
+    // otherwise silently turn every one of these per-tick increments into
+    // its own animated scroll. With wheel events firing dozens of times a
+    // second, those animations stack and fight each other, which is what
+    // made the drag feel broken/runaway. The commit/spring-back
+    // transitions (goTo, via scrollIntoView) are meant to be smooth and
+    // are unaffected by this.
+    window.scrollBy({ top: rawDelta * factor, left: 0, behavior: "instant" });
+  }
+
+  function scheduleSpringCheck(index) {
+    clearTimeout(springTimer);
+    springTimer = window.setTimeout(() => {
+      if (settling || anchorIndex !== index) return;
+      const offset = sectionOffset(index);
+      if (Math.abs(offset) > 2) springBackTo(index); // didn't cross
+    }, SPRING_BACK_MS);
+  }
+
+  // Trackpad/mouse momentum keeps firing real wheel/touch events after the
+  // user's actual input has stopped, decaying in magnitude as it tails
+  // off. Left unchecked, that decay can end up being the tick that finally
+  // tips a drag past the commit threshold — a page change nobody actively
+  // scrolled for. A tick that's clearly smaller than the one before it
+  // looks like decay rather than continued input; resisted movement still
+  // applies (so the drag stays smooth), but that specific tick isn't
+  // allowed to trigger a commit — only a genuinely active tick can.
+  const MOMENTUM_DECAY_RATIO = 0.75;
+  let lastWheelAbsDelta = 0;
+  function isMomentumTick(rawDelta) {
+    const abs = Math.abs(rawDelta);
+    const decaying = lastWheelAbsDelta > 0 && abs < lastWheelAbsDelta * MOMENTUM_DECAY_RATIO;
+    lastWheelAbsDelta = abs;
+    return decaying;
+  }
+
+  window.addEventListener(
+    "wheel",
+    (e) => {
+      if (settling) { e.preventDefault(); return; }
+      if (anchorIndex === null) anchorIndex = findNearbySection();
+      if (anchorIndex === null) return; // nowhere near a section — free scroll
+
+      const direction = e.deltaY > 0 ? 1 : e.deltaY < 0 ? -1 : 0;
+      if (direction === 0) return;
+
+      // Guess, before touching anything, whether this tick would grow the
+      // offset (a departure) or shrink it (a return toward rest) — a
+      // departure is when the raw wheel direction matches (or starts) the
+      // sense of the current offset. Only a genuine departure can be a
+      // boundary-exit attempt; a return must never be mistaken for one,
+      // even though at the first/last section its raw wheel direction is
+      // numerically identical to "leave the sequence" (e.g. returning to
+      // the first card from a partial slide toward the second needs the
+      // same upward scroll as leaving into the intro above it).
+      const signedOffset = sectionOffset(anchorIndex);
+      const isDepartingGuess =
+        (direction === 1 && signedOffset <= 0) || (direction === -1 && signedOffset >= 0);
+      if (isDepartingGuess && atBoundary(anchorIndex, direction)) return; // let native scroll leave the sequence
+
+      e.preventDefault();
+      const before = Math.abs(signedOffset);
+      applyResistedDelta(e.deltaY, anchorIndex);
+
+      const after = Math.abs(sectionOffset(anchorIndex));
+      const departing = after > before;
+      const momentumTick = isMomentumTick(e.deltaY);
+      // Only commit while this tick is genuinely pushing further away from
+      // rest (before < after). A wide engagement zone means a tick can
+      // start already far from rest — e.g. scrolling back up from deep in
+      // the footer toward the last card — and that motion is shrinking
+      // the offset, not growing it, so it should just be resisted, never
+      // treated as a commit toward the wrong neighboring section. A
+      // decaying momentum tick also never commits — see isMomentumTick
+      // above — even if it's technically the one crossing the threshold.
+      if (departing && after >= SCROLL_THRESHOLD_PX && !momentumTick) {
+        lastWheelAbsDelta = 0; // fresh start for the next gesture
+        commit(anchorIndex, direction);
+        return;
+      }
+      // Only arm the spring-back for a genuine departure. Arming it for a
+      // "returning toward rest" tick too meant any brief pause while
+      // scrolling back — normal between individual wheel notches — would
+      // auto-complete the rest of the return for you, which is what made
+      // it feel like no effort was needed at all. A return should only
+      // ever get where it's going via the user's own scrolling. Also
+      // cancel any spring-back armed by an earlier departing tick — once
+      // the user reverses into a return, that earlier safety net no
+      // longer applies and must not fire later on its own.
+      if (departing) scheduleSpringCheck(anchorIndex);
+      else clearTimeout(springTimer);
+    },
+    { passive: false }
+  );
+
+  // Touch: same resisted-drag treatment, driven by finger movement
+  // between consecutive touchmove events rather than wheel ticks. Its own
+  // momentum-decay tracker, separate from the wheel's — the two input
+  // types move at very different delta scales.
+  let touchLastY = null;
+  let lastTouchAbsDelta = 0;
+  function isMomentumTouchTick(rawDelta) {
+    const abs = Math.abs(rawDelta);
+    const decaying = lastTouchAbsDelta > 0 && abs < lastTouchAbsDelta * MOMENTUM_DECAY_RATIO;
+    lastTouchAbsDelta = abs;
+    return decaying;
+  }
+  window.addEventListener(
+    "touchstart",
+    (e) => {
+      if (anchorIndex === null) anchorIndex = findNearbySection();
+      touchLastY = anchorIndex === null ? null : e.touches[0].clientY;
+    },
+    { passive: true }
+  );
+  window.addEventListener(
+    "touchmove",
+    (e) => {
+      if (touchLastY === null || settling || anchorIndex === null) return;
+
+      const y = e.touches[0].clientY;
+      const rawDelta = touchLastY - y;
+      touchLastY = y;
+      const direction = rawDelta > 0 ? 1 : rawDelta < 0 ? -1 : 0;
+      if (direction === 0) return;
+
+      // Same departing-vs-returning guess as the wheel handler — see the
+      // comment there. Only release control (and stop tracking this drag)
+      // for a genuine boundary-exit departure, never for a return that
+      // happens to share the same raw direction at the first/last section.
+      const signedOffset = sectionOffset(anchorIndex);
+      const isDepartingGuess =
+        (direction === 1 && signedOffset <= 0) || (direction === -1 && signedOffset >= 0);
+      if (isDepartingGuess && atBoundary(anchorIndex, direction)) { touchLastY = null; return; }
+
+      e.preventDefault();
+      const before = Math.abs(signedOffset);
+      applyResistedDelta(rawDelta, anchorIndex);
+
+      const after = Math.abs(sectionOffset(anchorIndex));
+      const departing = after > before;
+      const momentumTick = isMomentumTouchTick(rawDelta);
+      if (departing) scheduleSpringCheck(anchorIndex);
+      else clearTimeout(springTimer);
+      if (departing && after >= SCROLL_THRESHOLD_PX && !momentumTick) {
+        lastTouchAbsDelta = 0; // fresh start for the next gesture
+        commit(anchorIndex, direction);
+        touchLastY = null;
+      }
+    },
+    { passive: false }
+  );
+  window.addEventListener("touchend", () => {
+    touchLastY = null;
+    lastTouchAbsDelta = 0;
+    if (!settling && anchorIndex !== null) scheduleSpringCheck(anchorIndex);
+  });
+
+  // Keyboard: a single Page Down/Up/Space/Arrow press pages directly —
+  // keyboard input is discrete, not a continuous drag, so resistance
+  // doesn't apply; one press = one page, same as native browser paging.
+  window.addEventListener("keydown", (e) => {
+    if (settling) return;
+    if (anchorIndex === null) anchorIndex = findNearbySection();
+    if (anchorIndex === null) return;
+
+    let direction = 0;
+    if (e.key === "PageDown" || e.key === "ArrowDown" || (e.key === " " && !e.shiftKey)) {
+      direction = 1;
+    } else if (e.key === "PageUp" || e.key === "ArrowUp" || (e.key === " " && e.shiftKey)) {
+      direction = -1;
+    } else {
+      return;
+    }
+
+    if (atBoundary(anchorIndex, direction)) return; // let native key-scroll through
+    e.preventDefault();
+    commit(anchorIndex, direction);
+  });
+})();
+  </script>
 </body>
 </html>

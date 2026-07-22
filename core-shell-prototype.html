@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Core-shell click prototype</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #F5F4F2; }
+  canvas { display: block; cursor: pointer; }
+  .hint {
+    position: fixed; top: 16px; left: 16px;
+    font: 13px "Source Code Pro", monospace; color: #6B6B6B;
+    letter-spacing: 0.02em;
+  }
+</style>
+</head>
+<body>
+<div class="hint">every particle already has a shell — click one to cure (interlink) the batch, click anywhere to reverse</div>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+function resize() {
+  canvas.width = window.innerWidth * devicePixelRatio;
+  canvas.height = window.innerHeight * devicePixelRatio;
+  canvas.style.width = window.innerWidth + "px";
+  canvas.style.height = window.innerHeight + "px";
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+}
+window.addEventListener("resize", resize);
+
+const CORE_RADIUS = 20;
+const SHELL_RADIUS = CORE_RADIUS * 1.7;
+const DASH_WIDTH = 4;
+const EASE_SPEED = 0.16;   // per-frame lerp for the link strength —
+                           // reversible by construction
+const POP_DURATION = 380;  // ms — brief settle bounce on the shells right
+                           // at the moment of curing/breaking
+const K_NEIGHBORS = 2;     // interlink bridges per molecule, standing in
+                           // for interdiffusion between touching shells
+const DELAY_PER_HOP = 90;  // ms — stagger between successive hops of the
+                           // propagating reveal, seeded from whichever
+                           // molecule you clicked
+const REVEAL_DURATION = 220; // ms — how long each individual bridge takes
+                              // to grow once the wave reaches it
+const MOLECULE_COUNT = 16;
+const DRIFT_MAX_SPEED = 0.3;  // px/frame — same slow ambient drift as the
+                               // Latex Films scene
+const DRIFT_JITTER = 0.018;
+
+function rand(min, max) { return min + Math.random() * (max - min); }
+
+function popBounce(t) {
+  if (t <= 0 || t >= 1) return 1;
+  const decay = Math.exp(-6 * t);
+  return 1 + 0.5 * decay * Math.sin(t * Math.PI * 4);
+}
+
+const molecules = [];
+function seed() {
+  molecules.length = 0;
+  const margin = SHELL_RADIUS * 1.5;
+  for (let i = 0; i < MOLECULE_COUNT; i++) {
+    molecules.push({
+      x: rand(margin, Math.max(margin, window.innerWidth - margin)),
+      y: rand(margin, Math.max(margin, window.innerHeight - margin)),
+      vx: rand(-DRIFT_MAX_SPEED, DRIFT_MAX_SPEED),
+      vy: rand(-DRIFT_MAX_SPEED, DRIFT_MAX_SPEED),
+    });
+  }
+}
+seed();
+
+function updateDiffusion() {
+  const margin = SHELL_RADIUS;
+  for (const m of molecules) {
+    m.vx += rand(-DRIFT_JITTER, DRIFT_JITTER);
+    m.vy += rand(-DRIFT_JITTER, DRIFT_JITTER);
+    const speed = Math.hypot(m.vx, m.vy);
+    if (speed > DRIFT_MAX_SPEED) {
+      m.vx = (m.vx / speed) * DRIFT_MAX_SPEED;
+      m.vy = (m.vy / speed) * DRIFT_MAX_SPEED;
+    }
+    m.x += m.vx;
+    m.y += m.vy;
+    if (m.x < margin) { m.x = margin; m.vx *= -1; }
+    if (m.x > window.innerWidth - margin) { m.x = window.innerWidth - margin; m.vx *= -1; }
+    if (m.y < margin) { m.y = margin; m.vy *= -1; }
+    if (m.y > window.innerHeight - margin) { m.y = window.innerHeight - margin; m.vy *= -1; }
+  }
+}
+
+// Every particle has a core AND a shell from the start — that's how
+// core-shell latex is actually made (seeded emulsion polymerization,
+// long before film formation). Curing doesn't grow the shells; it's the
+// point where neighboring shells make contact and start interdiffusing —
+// represented here by the link bridges, not by the shells themselves.
+let cured = false;
+let linkT = 0;   // eased 0..1, interlink strength
+let popStart = -9999;
+let links = [];
+
+function computeLinks() {
+  const result = [];
+  const seen = new Set();
+  for (let i = 0; i < molecules.length; i++) {
+    const dists = [];
+    for (let j = 0; j < molecules.length; j++) {
+      if (i === j) continue;
+      const dx = molecules[i].x - molecules[j].x;
+      const dy = molecules[i].y - molecules[j].y;
+      dists.push({ j, d: dx * dx + dy * dy });
+    }
+    dists.sort((a, b) => a.d - b.d);
+    for (let k = 0; k < Math.min(K_NEIGHBORS, dists.length); k++) {
+      const j = dists[k].j;
+      const key = i < j ? i + "_" + j : j + "_" + i;
+      if (!seen.has(key)) { seen.add(key); result.push({ a: i, b: j }); }
+    }
+  }
+  return result;
+}
+
+// Hop distance from `originIndex` through the link graph (BFS) — used so
+// the reveal travels outward along the actual bonds from wherever you
+// clicked, rather than every bridge appearing at once.
+function computeHopDistances(originIndex, linksList) {
+  const adjacency = new Map();
+  for (const { a, b } of linksList) {
+    if (!adjacency.has(a)) adjacency.set(a, []);
+    if (!adjacency.has(b)) adjacency.set(b, []);
+    adjacency.get(a).push(b);
+    adjacency.get(b).push(a);
+  }
+  const dist = new Map([[originIndex, 0]]);
+  const queue = [originIndex];
+  while (queue.length) {
+    const cur = queue.shift();
+    for (const next of adjacency.get(cur) || []) {
+      if (!dist.has(next)) { dist.set(next, dist.get(cur) + 1); queue.push(next); }
+    }
+  }
+  return dist;
+}
+
+// Annotates each link with a reveal `delay` (from its nearer endpoint's
+// hop distance) and which endpoint is `near`/`far`, so the bridge can be
+// drawn growing from near to far once its delay has elapsed.
+function scheduleLinkReveal(originIndex, linksList) {
+  const hopDist = computeHopDistances(originIndex, linksList);
+  const fallback = Math.max(0, ...Array.from(hopDist.values())) + 1;
+  for (const link of linksList) {
+    const da = hopDist.has(link.a) ? hopDist.get(link.a) : fallback;
+    const db = hopDist.has(link.b) ? hopDist.get(link.b) : fallback;
+    const aIsNear = da <= db;
+    link.near = aIsNear ? link.a : link.b;
+    link.far = aIsNear ? link.b : link.a;
+    link.delay = Math.min(da, db) * DELAY_PER_HOP;
+  }
+}
+
+// Shared with the corner-linking logic below, so both always agree on
+// where a hexagon's vertices actually are.
+const HEX_VERTEX_ANGLES = [0, 1, 2, 3, 4, 5].map((i) => (Math.PI / 3) * i - Math.PI / 2);
+
+// The vertex of a hexagon (at cx,cy) that most directly faces `towardAngle`
+// — used to pick which corner of each particle's shell should bridge to
+// its neighbor, rather than bridging through the centers.
+function facingVertex(cx, cy, radius, towardAngle) {
+  let best = HEX_VERTEX_ANGLES[0], bestDiff = Infinity;
+  for (const va of HEX_VERTEX_ANGLES) {
+    const diff = Math.abs(Math.atan2(Math.sin(va - towardAngle), Math.cos(va - towardAngle)));
+    if (diff < bestDiff) { bestDiff = diff; best = va; }
+  }
+  return [cx + radius * Math.cos(best), cy + radius * Math.sin(best)];
+}
+
+// Solid fill for the shell region — real core-shell particles have no
+// physical gap between the two polymer layers (the shell is grown
+// directly onto the core during synthesis), so filling this in is
+// actually the more accurate representation, not less.
+function drawShellFill(cx, cy, radius) {
+  ctx.fillStyle = "#B5B5B5";
+  const verts = HEX_VERTEX_ANGLES.map((angle) => [cx + radius * Math.cos(angle), cy + radius * Math.sin(angle)]);
+  ctx.beginPath();
+  verts.forEach((v, i) => (i === 0 ? ctx.moveTo(v[0], v[1]) : ctx.lineTo(v[0], v[1])));
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawShell(cx, cy, radius) {
+  ctx.strokeStyle = "#0A0A0A";
+  ctx.lineWidth = DASH_WIDTH;
+  ctx.lineCap = "round";
+  const verts = HEX_VERTEX_ANGLES.map((angle) => [cx + radius * Math.cos(angle), cy + radius * Math.sin(angle)]);
+  const sides = 6;
+  const segs = [[0.1, 0.42], [0.58, 0.9]]; // two dashes per edge, gaps at
+                                            // each vertex and mid-edge
+  for (let i = 0; i < sides; i++) {
+    const a = verts[i], b = verts[(i + 1) % sides];
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    for (const [t0, t1] of segs) {
+      ctx.beginPath();
+      ctx.moveTo(a[0] + dx * t0, a[1] + dy * t0);
+      ctx.lineTo(a[0] + dx * t1, a[1] + dy * t1);
+      ctx.stroke();
+    }
+  }
+}
+
+canvas.addEventListener("pointerdown", (e) => {
+  const x = e.clientX, y = e.clientY;
+
+  if (cured) {
+    cured = false;
+    popStart = performance.now();
+    return;
+  }
+
+  let hit = -1, hitD = (CORE_RADIUS + 10) * (CORE_RADIUS + 10);
+  for (let i = 0; i < molecules.length; i++) {
+    const m = molecules[i];
+    const dx = m.x - x, dy = m.y - y;
+    const d = dx * dx + dy * dy;
+    if (d < hitD) { hitD = d; hit = i; }
+  }
+  if (hit >= 0) {
+    cured = true;
+    links = computeLinks();
+    scheduleLinkReveal(hit, links);
+    popStart = performance.now();
+  }
+});
+
+function draw() {
+  if (!cured) updateDiffusion();
+
+  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  const now = performance.now();
+
+  linkT += ((cured ? 1 : 0) - linkT) * EASE_SPEED;
+
+  const popT = (now - popStart) / POP_DURATION;
+  const bounce = popT >= 0 && popT < 1 ? popBounce(popT) : 1;
+
+  if (links.length && linkT > 0.01) {
+    ctx.strokeStyle = "#0A0A0A";
+    ctx.lineWidth = 1.2;
+    ctx.globalAlpha = linkT * 0.7;
+    ctx.beginPath();
+    for (const link of links) {
+      // Each bridge grows from its "near" corner (closer to whichever
+      // molecule was clicked, by hop count) toward its "far" corner, only
+      // once the wave's delay for that bridge has elapsed — that's what
+      // makes the whole mesh read as propagating outward rather than
+      // snapping in all at once.
+      const localT = Math.max(0, Math.min(1, (now - popStart - link.delay) / REVEAL_DURATION));
+      if (localT <= 0) continue;
+      const mNear = molecules[link.near], mFar = molecules[link.far];
+      const angle = Math.atan2(mFar.y - mNear.y, mFar.x - mNear.x);
+      const pNear = facingVertex(mNear.x, mNear.y, SHELL_RADIUS * bounce, angle);
+      const pFar = facingVertex(mFar.x, mFar.y, SHELL_RADIUS * bounce, angle + Math.PI);
+      const px = pNear[0] + (pFar[0] - pNear[0]) * localT;
+      const py = pNear[1] + (pFar[1] - pNear[1]) * localT;
+      ctx.moveTo(pNear[0], pNear[1]);
+      ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  for (const m of molecules) {
+    drawShellFill(m.x, m.y, SHELL_RADIUS * bounce);
+    drawShell(m.x, m.y, SHELL_RADIUS * bounce);
+    ctx.fillStyle = "#6B6B6B";
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, CORE_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  requestAnimationFrame(draw);
+}
+
+resize();
+draw();
+</script>
+</body>
+</html>

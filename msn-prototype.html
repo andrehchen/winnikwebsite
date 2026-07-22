@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>MSN + PEG chains physics prototype</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #FFFFFF; overflow: hidden; }
+  canvas { display: block; touch-action: none; cursor: grab; }
+  canvas.dragging { cursor: grabbing; }
+  .hint {
+    position: fixed; top: 16px; left: 16px;
+    font: 13px "Source Code Pro", monospace; color: #6B6B6B;
+    letter-spacing: 0.02em;
+  }
+</style>
+</head>
+<body>
+<div class="hint">MSN core with PEG chains radiating out — drag any chain, or brush past one with the cursor.</div>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+function resize() {
+  canvas.width = window.innerWidth * devicePixelRatio;
+  canvas.height = window.innerHeight * devicePixelRatio;
+  canvas.style.width = window.innerWidth + "px";
+  canvas.style.height = window.innerHeight + "px";
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+}
+window.addEventListener("resize", resize);
+resize();
+
+// ============================================================================
+// Same two-layer approach as chain-physics-prototype.html (physics rope +
+// static detail chain mapped onto it via arc-length), just multiplied: many
+// short chains, each anchored to a point on the MSN circle's edge and
+// extending outward along its own radial direction. Every rope is an
+// independent physics body — same shared detail geometry, same shared
+// constants, but its own hinges/drag state.
+// ============================================================================
+
+// ---- 1. Detail chain (static reference geometry, shared by every rope) ----
+// Same shape as before, scaled down by 2/5 and repeated 5x instead of 2x —
+// total chain length is unchanged, just divided into more, smaller repeats.
+const UNIT_A = [[0,0],[-7.84,9.15],[-15.68,18.29],[0,31.87],[-18.4,47.81]];
+const UNIT_B = [[0,0],[7.84,9.14],[15.68,18.29],[0,31.87],[18.4,47.80]];
+const DETAIL_UNITS = 5;
+
+const referencePoints = [{ x: 0, y: 0, isJoint: true }];
+{
+  let curX = 0, curY = 0;
+  for (let u = 0; u < DETAIL_UNITS; u++) {
+    const template = u % 2 === 0 ? UNIT_A : UNIT_B;
+    for (let j = 1; j < template.length; j++) {
+      referencePoints.push({
+        x: curX + template[j][0],
+        y: curY + template[j][1],
+        isJoint: j === template.length - 1,
+      });
+    }
+    curX += template[template.length - 1][0];
+    curY += template[template.length - 1][1];
+  }
+}
+let refArcLen = [0];
+for (let i = 1; i < referencePoints.length; i++) {
+  const a = referencePoints[i - 1], b = referencePoints[i];
+  refArcLen.push(refArcLen[i - 1] + Math.hypot(b.x - a.x, b.y - a.y));
+}
+const REF_TOTAL_LEN = refArcLen[refArcLen.length - 1];
+const referenceT = refArcLen.map((l) => l / REF_TOTAL_LEN);
+const referenceOffset = referencePoints.map((p) => p.x);
+
+// ---- 2. Physics constants (shared by every rope) --------------------------
+const N_HINGES = 8; // more hinges = more independent bend points along the
+                     // rope, so it can hold multiple curves like fabric
+                     // instead of just one gentle arc
+const DAMPING = 0.6;
+const CONSTRAINT_ITERATIONS = 8;
+const LINK_STIFFNESS = 0.35;  // much stiffer than before — this is what was
+                                // letting the drag field stretch the rope
+                                // sideways (parallel to the drag) before the
+                                // constraint solver slowly pulled it back,
+                                // which read as elastic. Length is now
+                                // enforced hard enough that dragging bends
+                                // the rope around its anchor instead of
+                                // stretching it. BEND_STIFFNESS (shape, not
+                                // length) stays soft so it still holds
+                                // multiple fabric-like curves.
+const BEND_STIFFNESS = 0.035;
+const SWAY_AMPLITUDE = 22;
+const SWAY_SPEED = 0.018;
+const SWAY_PULL = 0.05;
+const BRUSH_RADIUS = 80;        // passive hover push (cursor moving, not held)
+const BRUSH_STRENGTH = 16;
+const DRAG_FIELD_RADIUS = 260;  // active-drag "solvent current" — wider than
+                                 // the passive brush, since it's meant to
+                                 // sweep up whole neighborhoods of pegs, not
+                                 // just whatever's directly under the cursor
+const DRAG_FIELD_STRENGTH = 0.65; // fraction of the cursor's own per-frame
+                                  // velocity imparted to a peg right next to
+                                  // it — close to 1 so nearby pegs feel like
+                                  // they're being carried by the current,
+                                  // tapering to 0 at DRAG_FIELD_RADIUS
+const LABEL_MASK_RADIUS = 7; // smaller repeats need a smaller label/mask
+// Simple flat/parallel style, matching the reference exactly: 3 evenly
+// spaced, PARALLEL bonds straight out from the surface to 3 O's, which then
+// converge diagonally to a single Si.
+const SILANE_O_SPACING = 15;    // spacing between adjacent O's, tangent to
+                                  // the surface
+const SILANE_BOND1_LEN = 20;    // surface -> O (parallel, perpendicular to
+                                  // the surface, same length for all 3)
+const SILANE_BOND2_LEN = 22;    // O -> Si (converging diagonals)
+const SILANE_SI_OFFSET = SILANE_BOND1_LEN + SILANE_BOND2_LEN; // Si sits
+                                  // further out along the same outward axis
+                                  // as the middle O — the PEG chain then
+                                  // continues on from there
+const HINGE_SPACING = REF_TOTAL_LEN / (N_HINGES - 1);
+
+// ---- 3. MSN core + ropes radiating outward from its edge ------------------
+const MSN_RADIUS = 175; // the actual silica sphere — silane groups attach
+                         // via their methoxy tips reaching back to this
+                         // surface, from a Si sitting just outside it
+const NUM_CHAINS = 15;
+const cx = window.innerWidth / 2;
+const cy = window.innerHeight / 2;
+
+const ropes = [];
+for (let k = 0; k < NUM_CHAINS; k++) {
+  const angle = (k / NUM_CHAINS) * Math.PI * 2 - Math.PI / 2;
+  const dirX = Math.cos(angle), dirY = Math.sin(angle);
+  const anchorX = cx + dirX * (MSN_RADIUS + SILANE_SI_OFFSET);
+  const anchorY = cy + dirY * (MSN_RADIUS + SILANE_SI_OFFSET);
+  const hinges = [];
+  for (let i = 0; i < N_HINGES; i++) {
+    const x = anchorX + dirX * i * HINGE_SPACING;
+    const y = anchorY + dirY * i * HINGE_SPACING;
+    hinges.push({ x, y, oldX: x, oldY: y, pinned: i === 0, restX: x, restY: y });
+  }
+  ropes.push({ hinges, dirX, dirY, anchorX, anchorY });
+}
+
+// ---- 4. Lanthanide mass-tag balls + color-drop effect ---------------------
+// The one deliberate spot of color in an otherwise strict black-and-white
+// scene — mimicking mass-cytometry heavy-metal tags, each a different
+// lanthanide. Dragged from the tray and dropped onto the MSN, each one
+// triggers a wavefront of its color spreading outward through the pores.
+const LANTHANIDES = [
+  { label: "La", color: "#3B7DD8" },
+  { label: "Nd", color: "#3FA66B" },
+  { label: "Tb", color: "#D8483B" },
+  { label: "Ho", color: "#9B59D0" },
+  { label: "Yb", color: "#D89A2E" },
+];
+const BALL_RADIUS = 15;
+const BALL_SPACING = 46;
+const BALL_WOBBLE_AMPLITUDE = 3; // px — slow drift while sitting in the tray
+const BALL_WOBBLE_SPEED = 0.00084; // ms multiplier — slow, ~10s+ per cycle
+const TRAY_X = 70;
+const TRAY_Y0 = cy - ((LANTHANIDES.length - 1) * BALL_SPACING) / 2;
+const WAVE_SPEED = 140; // px/sec the color propagates outward at
+const WOBBLE_DURATION = 450; // ms a pore dot wiggles for right after the
+                               // color wavefront reaches it
+const WOBBLE_AMPLITUDE = 1.6; // px
+
+const balls = LANTHANIDES.map((ln, i) => ({
+  ...ln,
+  homeX: TRAY_X, homeY: TRAY_Y0 + i * BALL_SPACING,
+  x: TRAY_X, y: TRAY_Y0 + i * BALL_SPACING,
+  consumed: false,
+}));
+const colorWaves = []; // { x, y, color, startTime }
+let draggedBall = -1;
+
+let isDragging = false;
+let pointerX = -9999, pointerY = -9999;
+let prevPointerX = -9999, prevPointerY = -9999;
+let hasPointer = false;
+let time = 0;
+
+function toLocal(evt) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: evt.clientX - rect.left, y: evt.clientY - rect.top };
+}
+
+// Dragging no longer grabs a specific joint — it drags the SOLVENT. Anywhere
+// the cursor moves while held down becomes a current: every nearby hinge
+// (on any rope, whichever ones happen to be in range) gets carried along by
+// a fraction of the cursor's own velocity, falling off with distance. Pegs
+// never touched directly still move, because the fluid between them does.
+// A lanthanide ball takes priority over the solvent drag if the pointer
+// lands on one — it's picked up and moved kinematically instead.
+canvas.addEventListener("pointerdown", (e) => {
+  const { x, y } = toLocal(e);
+  for (let i = 0; i < balls.length; i++) {
+    const b = balls[i];
+    if (b.consumed) continue;
+    if (Math.hypot(b.x - x, b.y - y) < BALL_RADIUS + 8) {
+      draggedBall = i;
+      canvas.classList.add("dragging");
+      canvas.setPointerCapture(e.pointerId);
+      return;
+    }
+  }
+  isDragging = true;
+  pointerX = prevPointerX = x;
+  pointerY = prevPointerY = y;
+  canvas.classList.add("dragging");
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener("pointermove", (e) => {
+  const { x, y } = toLocal(e);
+  pointerX = x; pointerY = y;
+  hasPointer = true;
+  if (draggedBall >= 0) {
+    balls[draggedBall].x = x;
+    balls[draggedBall].y = y;
+  }
+});
+canvas.addEventListener("pointerleave", () => { hasPointer = false; });
+canvas.addEventListener("pointerup", () => {
+  if (draggedBall >= 0) {
+    const b = balls[draggedBall];
+    if (Math.hypot(b.x - cx, b.y - cy) < MSN_RADIUS) {
+      // Dropped on the MSN — trigger a wavefront of this element's color
+      // spreading outward through the pores, and consume the ball.
+      colorWaves.push({ x: b.x, y: b.y, color: b.color, startTime: performance.now() });
+      b.consumed = true;
+    } else {
+      // Missed — snap back to the tray.
+      b.x = b.homeX; b.y = b.homeY;
+    }
+    draggedBall = -1;
+  }
+  isDragging = false;
+  canvas.classList.remove("dragging");
+});
+canvas.addEventListener("pointercancel", () => {
+  if (draggedBall >= 0) {
+    balls[draggedBall].x = balls[draggedBall].homeX;
+    balls[draggedBall].y = balls[draggedBall].homeY;
+    draggedBall = -1;
+  }
+  isDragging = false;
+  canvas.classList.remove("dragging");
+});
+
+function updateRope(rope, ropeIndex, velX, velY) {
+  const hinges = rope.hinges;
+
+  for (let i = 0; i < hinges.length; i++) {
+    const p = hinges[i];
+    if (p.pinned) continue;
+
+    const vx = (p.x - p.oldX) * DAMPING;
+    const vy = (p.y - p.oldY) * DAMPING;
+    p.oldX = p.x; p.oldY = p.y;
+    p.x += vx;
+    p.y += vy;
+
+    // Cantilever taper for passive ambient sway ONLY — a stylized idle
+    // decoration, not a physical force, so it's fine for it to be hand-
+    // tuned (anchor-adjacent joints stay visually still at rest, the tip
+    // wobbles the most). freedom goes 0 at the anchor-adjacent joint to 1
+    // at the tip.
+    const freedom = Math.pow(i / (hinges.length - 1), 1.6);
+
+    const targetX = p.restX + Math.sin(time + i * 0.9 + ropeIndex) * SWAY_AMPLITUDE * freedom;
+    const targetY = p.restY + Math.cos(time * 0.8 + i * 1.1 + ropeIndex) * SWAY_AMPLITUDE * 0.6 * freedom;
+    p.x += (targetX - p.x) * SWAY_PULL;
+    p.y += (targetY - p.y) * SWAY_PULL;
+
+    // Drag and brush are real forces applied UNIFORMLY (no artificial
+    // per-joint taper) — whatever cantilever-like response emerges (base
+    // barely moving, tip swinging far) now comes entirely from the actual
+    // rope physics: a joint right next to the pin is tightly constrained by
+    // a short, stiff link, while joints further out have more accumulated
+    // slack to move through. That's also what lets a drag near the anchor
+    // genuinely propagate out to the tip, the way a real rope would.
+    if (isDragging) {
+      const dx = p.x - pointerX, dy = p.y - pointerY;
+      const dist = Math.hypot(dx, dy);
+      if (dist < DRAG_FIELD_RADIUS) {
+        const falloff = 1 - dist / DRAG_FIELD_RADIUS;
+        p.x += velX * falloff * DRAG_FIELD_STRENGTH;
+        p.y += velY * falloff * DRAG_FIELD_STRENGTH;
+      }
+    } else if (hasPointer) {
+      const dx = p.x - pointerX, dy = p.y - pointerY;
+      const dist = Math.hypot(dx, dy);
+      if (dist < BRUSH_RADIUS && dist > 0.001) {
+        const push = (1 - dist / BRUSH_RADIUS) * BRUSH_STRENGTH;
+        p.x += (dx / dist) * push;
+        p.y += (dy / dist) * push;
+      }
+    }
+  }
+
+  for (let iter = 0; iter < CONSTRAINT_ITERATIONS; iter++) {
+    for (let i = 0; i < hinges.length - 1; i++) {
+      const a = hinges[i], b = hinges[i + 1];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const dist = Math.hypot(dx, dy) || 0.0001;
+      const diff = ((dist - HINGE_SPACING) / dist) * LINK_STIFFNESS;
+      const offX = dx * 0.5 * diff, offY = dy * 0.5 * diff;
+      if (!a.pinned) { a.x += offX; a.y += offY; }
+      if (!b.pinned) { b.x -= offX; b.y -= offY; }
+    }
+    for (let i = 1; i < hinges.length - 1; i++) {
+      const prev = hinges[i - 1], cur = hinges[i], next = hinges[i + 1];
+      if (cur.pinned) continue;
+      const midX = (prev.x + next.x) / 2;
+      const midY = (prev.y + next.y) / 2;
+      cur.x += (midX - cur.x) * BEND_STIFFNESS;
+      cur.y += (midY - cur.y) * BEND_STIFFNESS;
+    }
+  }
+}
+
+function sampleRope(hinges, t, hingeArcLen, hingeTotalLen) {
+  const target = t * hingeTotalLen;
+  let i = 0;
+  while (i < hingeArcLen.length - 2 && hingeArcLen[i + 1] < target) i++;
+  const a = hinges[i], b = hinges[i + 1];
+  const segLen = hingeArcLen[i + 1] - hingeArcLen[i] || 0.0001;
+  const segT = (target - hingeArcLen[i]) / segLen;
+  const x = a.x + (b.x - a.x) * segT;
+  const y = a.y + (b.y - a.y) * segT;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 0.0001;
+  return { x, y, tanX: dx / len, tanY: dy / len, normX: -dy / len, normY: dx / len };
+}
+
+const LATTICE_ATOMS = 36; // alternating Si/O around the outer ring — even,
+                            // so it closes cleanly back on Si
+const LATTICE_INNER_RADIUS = MSN_RADIUS - 14; // a second layer right next to
+                            // the outer one (small fixed gap), not deep
+                            // inside the particle
+const LATTICE_INNER_ATOMS = 35; // nearly the same count as the outer ring,
+                            // since the circumference is almost the same at
+                            // this small a gap
+
+function drawLatticeRing(radius, atomCount, phase) {
+  const atomPositions = [];
+  for (let i = 0; i < atomCount; i++) {
+    const a = (i / atomCount) * Math.PI * 2 + phase;
+    atomPositions.push({
+      x: cx + Math.cos(a) * radius,
+      y: cy + Math.sin(a) * radius,
+      isSi: i % 2 === 0,
+    });
+  }
+
+  ctx.strokeStyle = "#0A0A0A";
+  ctx.lineWidth = 1.75;
+  ctx.lineCap = "butt";
+  ctx.beginPath();
+  atomPositions.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+  ctx.closePath();
+  ctx.stroke();
+
+  ctx.fillStyle = "#FFFFFF";
+  for (const p of atomPositions) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.isSi ? LABEL_MASK_RADIUS + 3 : LABEL_MASK_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = "#0A0A0A";
+  ctx.font = "600 10px Inter, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (const p of atomPositions) {
+    ctx.fillText(p.isSi ? "Si" : "O", p.x, p.y);
+  }
+}
+
+function drawMSN() {
+  // Faint guide circle — kept only as a positional reference (chain anchors
+  // are still computed off MSN_RADIUS), not the main visual anymore.
+  ctx.strokeStyle = "#E4E4E4";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(cx, cy, MSN_RADIUS, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Repeating Si-O rings, prototyping the real silica network structure
+  // (image reference: alternating Si-O-Si-O chains) — two concentric layers
+  // instead of a plain stroke circle. Offsetting the inner ring's phase
+  // keeps its atoms from lining up radially with the outer ring's, reading
+  // more like an actual staggered lattice.
+  drawLatticeRing(MSN_RADIUS, LATTICE_ATOMS, 0);
+  drawLatticeRing(LATTICE_INNER_RADIUS, LATTICE_INNER_ATOMS, Math.PI / LATTICE_INNER_ATOMS);
+
+  // Dense, regular hex-packed pore dots covering the interior, matching the
+  // reference MSN electron-micrograph look (uniform honeycomb of pores),
+  // instead of the previous sparse/scattered dots. Each dot checks the
+  // active color waves (most recent first) and picks up that lanthanide's
+  // color once the wavefront has reached it.
+  const PORE_SPACING = 15;
+  const PORE_RADIUS = 3.4;
+  const poreFillRadius = LATTICE_INNER_RADIUS - 14; // stay clear of the inner ring
+  const rowHeight = PORE_SPACING * Math.sin(Math.PI / 3);
+  const rows = Math.ceil(poreFillRadius / rowHeight) + 1;
+  const now = performance.now();
+  for (let row = -rows; row <= rows; row++) {
+    const y = row * rowHeight;
+    const xOffset = row % 2 !== 0 ? PORE_SPACING / 2 : 0;
+    const cols = Math.ceil(poreFillRadius / PORE_SPACING) + 1;
+    for (let col = -cols; col <= cols; col++) {
+      const x = col * PORE_SPACING + xOffset;
+      if (Math.hypot(x, y) > poreFillRadius) continue;
+      const dotX = cx + x, dotY = cy + y;
+
+      let color = "#0A0A0A";
+      let sinceReached = Infinity; // ms since the wavefront passed this dot
+      for (let w = colorWaves.length - 1; w >= 0; w--) {
+        const wave = colorWaves[w];
+        const dist = Math.hypot(dotX - wave.x, dotY - wave.y);
+        const reachedAt = wave.startTime + (dist / WAVE_SPEED) * 1000;
+        if (now >= reachedAt) {
+          color = wave.color;
+          sinceReached = now - reachedAt;
+          break;
+        }
+      }
+
+      // Freshly-diffused dots wobble for a moment right as the color
+      // reaches them, settling down afterward — reads as active diffusion
+      // sweeping through the pores rather than a flat color change.
+      let wobbleX = 0, wobbleY = 0;
+      if (sinceReached < WOBBLE_DURATION) {
+        const fade = 1 - sinceReached / WOBBLE_DURATION;
+        const seed = col * 12.9898 + row * 78.233;
+        const phase = (seed - Math.floor(seed)) * Math.PI * 2;
+        wobbleX = Math.sin(now * 0.02 + phase) * WOBBLE_AMPLITUDE * fade;
+        wobbleY = Math.cos(now * 0.017 + phase * 1.3) * WOBBLE_AMPLITUDE * fade;
+      }
+
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(dotX + wobbleX, dotY + wobbleY, PORE_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawLanthanides() {
+  ctx.font = "600 11px Inter, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const now = performance.now();
+  for (let i = 0; i < balls.length; i++) {
+    const b = balls[i];
+    if (b.consumed) continue;
+
+    // Gentle, slow Brownian-ish jitter while sitting in the tray (not while
+    // actively being dragged) — a small drifting wobble, not a clean
+    // sinusoid, so it doesn't read as mechanically regular.
+    let bx = b.x, by = b.y;
+    if (i !== draggedBall) {
+      const t = now * BALL_WOBBLE_SPEED + i * 17.3;
+      bx += (Math.sin(t) + Math.sin(t * 0.53 + i)) * BALL_WOBBLE_AMPLITUDE * 0.5;
+      by += (Math.cos(t * 0.71 + i * 2) + Math.sin(t * 0.37)) * BALL_WOBBLE_AMPLITUDE * 0.5;
+    }
+
+    ctx.fillStyle = b.color;
+    ctx.beginPath();
+    ctx.arc(bx, by, BALL_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillText(b.label, bx, by);
+  }
+}
+
+function drawRope(rope) {
+  const hinges = rope.hinges;
+  const hingeArcLen = [0];
+  for (let i = 1; i < hinges.length; i++) {
+    hingeArcLen.push(hingeArcLen[i - 1] + Math.hypot(hinges[i].x - hinges[i - 1].x, hinges[i].y - hinges[i - 1].y));
+  }
+  const hingeTotalLen = hingeArcLen[hingeArcLen.length - 1];
+
+  const mapped = referenceT.map((t, i) => {
+    const s = sampleRope(hinges, t, hingeArcLen, hingeTotalLen);
+    const offset = referenceOffset[i];
+    return { x: s.x + s.normX * offset, y: s.y + s.normY * offset };
+  });
+
+  ctx.strokeStyle = "#0A0A0A";
+  ctx.lineWidth = 1.75;
+  ctx.lineCap = "butt";
+  ctx.lineJoin = "miter";
+  ctx.beginPath();
+  mapped.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+  ctx.stroke();
+
+  ctx.fillStyle = "#FFFFFF";
+  for (let i = 0; i < mapped.length; i++) {
+    if (referencePoints[i].isJoint && i > 0) {
+      ctx.beginPath();
+      ctx.arc(mapped[i].x, mapped[i].y, LABEL_MASK_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.fillStyle = "#0A0A0A";
+  ctx.font = "600 10px Inter, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (let i = 0; i < mapped.length; i++) {
+    if (referencePoints[i].isJoint && i > 0) {
+      ctx.fillText("O", mapped[i].x, mapped[i].y);
+    }
+  }
+}
+
+// Silane coupling group, matching the reference exactly: 3 evenly spaced
+// PARALLEL bonds straight out from the MSN surface to 3 O's, which then
+// converge diagonally to a single Si (which the PEG chain continues on
+// from). Treats the surface as locally flat here, same as the reference —
+// at this bond scale vs. the MSN's actual radius, the curvature is
+// negligible.
+function drawSilane(rope) {
+  const { dirX, dirY } = rope;
+  const tangentX = -dirY, tangentY = dirX;
+  const surfaceX = cx + dirX * MSN_RADIUS, surfaceY = cy + dirY * MSN_RADIUS;
+  const siX = cx + dirX * (MSN_RADIUS + SILANE_SI_OFFSET);
+  const siY = cy + dirY * (MSN_RADIUS + SILANE_SI_OFFSET);
+
+  ctx.strokeStyle = "#0A0A0A";
+  ctx.lineWidth = 1.75;
+  ctx.lineCap = "butt";
+
+  const oPositions = [];
+  for (const off of [-1, 0, 1]) {
+    const baseX = surfaceX + tangentX * off * SILANE_O_SPACING;
+    const baseY = surfaceY + tangentY * off * SILANE_O_SPACING;
+    const oX = baseX + dirX * SILANE_BOND1_LEN;
+    const oY = baseY + dirY * SILANE_BOND1_LEN;
+
+    ctx.beginPath();
+    ctx.moveTo(baseX, baseY);
+    ctx.lineTo(oX, oY);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(oX, oY);
+    ctx.lineTo(siX, siY);
+    ctx.stroke();
+    oPositions.push({ x: oX, y: oY });
+  }
+
+  ctx.fillStyle = "#FFFFFF";
+  ctx.beginPath();
+  ctx.arc(siX, siY, LABEL_MASK_RADIUS + 3, 0, Math.PI * 2);
+  ctx.fill();
+  for (const p of oPositions) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, LABEL_MASK_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = "#0A0A0A";
+  ctx.font = "600 10px Inter, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("Si", siX, siY);
+  for (const p of oPositions) ctx.fillText("O", p.x, p.y);
+}
+
+function loop() {
+  time += SWAY_SPEED;
+  // Pointer velocity computed ONCE per frame (not per point/rope) — this is
+  // the "current" strength that gets carried into every nearby peg below.
+  const velX = isDragging ? pointerX - prevPointerX : 0;
+  const velY = isDragging ? pointerY - prevPointerY : 0;
+  prevPointerX = pointerX; prevPointerY = pointerY;
+
+  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  for (let r = 0; r < ropes.length; r++) updateRope(ropes[r], r, velX, velY);
+  drawMSN();
+  for (let r = 0; r < ropes.length; r++) {
+    drawRope(ropes[r]);
+    drawSilane(ropes[r]);
+  }
+  drawLanthanides();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>

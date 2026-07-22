@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Silane terminus prototype</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #FFFFFF; }
+  canvas { display: block; }
+  .hint {
+    position: fixed; top: 16px; left: 16px;
+    font: 13px "Source Code Pro", monospace; color: #6B6B6B;
+    letter-spacing: 0.02em;
+  }
+</style>
+</head>
+<body>
+<div class="hint">isolated silane terminus — Si, 3 equal-length Si-O bonds, PEG chain continuing the other way</div>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+function resize() {
+  canvas.width = window.innerWidth * devicePixelRatio;
+  canvas.height = window.innerHeight * devicePixelRatio;
+  canvas.style.width = window.innerWidth + "px";
+  canvas.style.height = window.innerHeight + "px";
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  draw();
+}
+window.addEventListener("resize", resize);
+
+// ---- PEG chain geometry (same as the validated hero-chain extraction) -----
+const UNIT_A = [[0,0],[-19.6,22.865],[-39.2,45.73],[0,79.68],[-46,119.52]];
+const UNIT_B = [[0,0],[19.6,22.86],[39.2,45.72],[0,79.67],[46,119.51]];
+const CHAIN_UNITS = 3;
+const LABEL_MASK_RADIUS = 11;
+
+// ---- Silane terminus --------------------------------------------------
+const SILANE_BOND_LEN = 30;    // Si -> O AND O -> (unlabeled end): EQUAL length
+const SILANE_FAN_ANGLE = 1.0;  // radians between adjacent branches' first bond —
+                                 // needs to be wide enough that the 3 O labels
+                                 // (each ~22px across incl. mask) don't overlap
+                                 // this close to Si
+const SILANE_KINK_ANGLE = 0.68; // radians the 2nd bond rotates off the 1st
+
+function rotate(x, y, a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  return [x * c - y * s, x * s + y * c];
+}
+
+function draw() {
+  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  ctx.strokeStyle = "#0A0A0A";
+  ctx.fillStyle = "#0A0A0A";
+  ctx.lineWidth = 1.75;
+  ctx.lineCap = "butt";
+  ctx.lineJoin = "miter";
+  ctx.font = "600 19px Inter, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  const siX = window.innerWidth / 2;
+  const siY = 180;
+
+  // --- silane: 3 equal-length Si-O-(end) branches, fanned upward/outward,
+  // away from where the PEG chain continues (downward from Si) ---
+  const upX = 0, upY = -1;
+  const oPositions = [];
+  for (const off of [-SILANE_FAN_ANGLE, 0, SILANE_FAN_ANGLE]) {
+    const [b1x, b1y] = rotate(upX, upY, off);
+    const oX = siX + b1x * SILANE_BOND_LEN;
+    const oY = siY + b1y * SILANE_BOND_LEN;
+
+    const kink = off < 0 ? -SILANE_KINK_ANGLE : SILANE_KINK_ANGLE;
+    const [b2x, b2y] = rotate(b1x, b1y, kink);
+    const endX = oX + b2x * SILANE_BOND_LEN;
+    const endY = oY + b2y * SILANE_BOND_LEN;
+
+    ctx.beginPath();
+    ctx.moveTo(siX, siY);
+    ctx.lineTo(oX, oY);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(oX, oY);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+    oPositions.push({ x: oX, y: oY });
+  }
+
+  // --- PEG chain continuing downward from Si ---
+  const chainPoints = [{ x: 0, y: 0, isJoint: true }];
+  {
+    let curX = 0, curY = 0;
+    for (let u = 0; u < CHAIN_UNITS; u++) {
+      const template = u % 2 === 0 ? UNIT_A : UNIT_B;
+      for (let j = 1; j < template.length; j++) {
+        chainPoints.push({
+          x: curX + template[j][0],
+          y: curY + template[j][1],
+          isJoint: j === template.length - 1,
+        });
+      }
+      curX += template[template.length - 1][0];
+      curY += template[template.length - 1][1];
+    }
+  }
+  const mapped = chainPoints.map((p) => ({ x: siX + p.x, y: siY + p.y }));
+  ctx.beginPath();
+  mapped.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+  ctx.stroke();
+
+  ctx.fillStyle = "#FFFFFF";
+  for (let i = 0; i < mapped.length; i++) {
+    if (chainPoints[i].isJoint && i > 0) {
+      ctx.beginPath();
+      ctx.arc(mapped[i].x, mapped[i].y, LABEL_MASK_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  for (const p of oPositions) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, LABEL_MASK_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.beginPath();
+  ctx.arc(siX, siY, LABEL_MASK_RADIUS + 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#0A0A0A";
+  for (let i = 0; i < mapped.length; i++) {
+    if (chainPoints[i].isJoint && i > 0) ctx.fillText("O", mapped[i].x, mapped[i].y);
+  }
+  for (const p of oPositions) ctx.fillText("O", p.x, p.y);
+  ctx.fillText("Si", siX, siY);
+}
+
+resize();
+</script>
+</body>
+</html>

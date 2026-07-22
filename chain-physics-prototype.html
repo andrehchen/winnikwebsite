@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>PEG chain physics prototype</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #FFFFFF; overflow: hidden; }
+  canvas { display: block; touch-action: none; cursor: grab; }
+  canvas.dragging { cursor: grabbing; }
+  .hint {
+    position: fixed; top: 16px; left: 16px;
+    font: 13px "Source Code Pro", monospace; color: #6B6B6B;
+    letter-spacing: 0.02em;
+  }
+</style>
+</head>
+<body>
+<div class="hint">in solution — no gravity. move your cursor near the chain to brush it, drag to grab it.</div>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+function resize() {
+  canvas.width = window.innerWidth * devicePixelRatio;
+  canvas.height = window.innerHeight * devicePixelRatio;
+  canvas.style.width = window.innerWidth + "px";
+  canvas.style.height = window.innerHeight + "px";
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+}
+window.addEventListener("resize", resize);
+resize();
+
+// ============================================================================
+// Two separate things, deliberately kept apart:
+//   1. The PHYSICS ROPE — a handful of hinge points, simulated as a plain
+//      inextensible verlet rope (no zigzag detail baked into the physics).
+//   2. The DETAIL CHAIN — the real hero chain's exact zigzag geometry
+//      (from index.html's pegChainPath), pre-baked as a static flat
+//      reference. Every frame, each detail point is re-projected onto the
+//      rope's current curve by arc-length position + perpendicular offset,
+//      like a skin deforming along a spline. The rope never "looks like"
+//      a chain itself — the SVG-equivalent detail is what's mapped onto it.
+// ============================================================================
+
+// ---- 1. Detail chain (static reference geometry) --------------------------
+// Same as the original hero chain's exact geometry, with ONE targeted change:
+// the top carbon (index 1) is repositioned to sit exactly on the line from
+// the O to index 2, so it no longer shows a kink — every other point
+// (including the real corner) is untouched.
+const UNIT_A = [[0,0],[-19.6,22.865],[-39.2,45.73],[0,79.68],[-46,119.52]];
+const UNIT_B = [[0,0],[19.6,22.86],[39.2,45.72],[0,79.67],[46,119.51]];
+const DETAIL_UNITS = 9; // 10 O joints
+
+const referencePoints = [{ x: 0, y: 0, isJoint: true }];
+{
+  let curX = 0, curY = 0;
+  for (let u = 0; u < DETAIL_UNITS; u++) {
+    const template = u % 2 === 0 ? UNIT_A : UNIT_B;
+    for (let j = 1; j < template.length; j++) {
+      referencePoints.push({
+        x: curX + template[j][0],
+        y: curY + template[j][1],
+        isJoint: j === template.length - 1,
+      });
+    }
+    curX += template[template.length - 1][0];
+    curY += template[template.length - 1][1];
+  }
+}
+// Arc length (along the straight/flat reference pose) at each detail point,
+// normalized to [0,1] — this is the "t" used to look the point up on the
+// current (possibly curved) rope.
+let refArcLen = [0];
+for (let i = 1; i < referencePoints.length; i++) {
+  const a = referencePoints[i - 1], b = referencePoints[i];
+  refArcLen.push(refArcLen[i - 1] + Math.hypot(b.x - a.x, b.y - a.y));
+}
+const REF_TOTAL_LEN = refArcLen[refArcLen.length - 1];
+const referenceT = refArcLen.map((l) => l / REF_TOTAL_LEN);
+// Perpendicular offset from the straight centerline (x=0) — since the flat
+// reference pose is a straight vertical line, this is just each point's x.
+const referenceOffset = referencePoints.map((p) => p.x);
+
+// ---- 2. Physics rope (few hinges, plain inextensible verlet chain) -------
+const N_HINGES = 7;
+const DAMPING = 0.6;                // in this verlet formula (x-oldX)*DAMPING
+                                     // is how much velocity survives into next
+                                     // frame. High enough to carry real
+                                     // momentum (so a release gently swings
+                                     // past rest and back, like a pendulum),
+                                     // but the restoring forces below
+                                     // (LINK_STIFFNESS/BEND_STIFFNESS) are
+                                     // kept soft, so the swing stays slow and
+                                     // wave-like rather than fast/springy.
+const CONSTRAINT_ITERATIONS = 6;    // a link constraint's pairwise correction
+                                     // is an EXACT solve regardless of
+                                     // iteration count, so iteration count
+                                     // alone doesn't make it soft — that's
+                                     // LINK_STIFFNESS below. This just governs
+                                     // how many hinges a disturbance can
+                                     // propagate through in one frame.
+const LINK_STIFFNESS = 0.07;        // fraction of each pairwise length
+                                     // violation corrected per iteration —
+                                     // deliberately small so the rope takes
+                                     // many seconds (not frames) to fully
+                                     // settle, like heavy fabric relaxing in
+                                     // a viscous fluid rather than a rope
+                                     // snapping taut
+const BEND_STIFFNESS = 0.035;       // gentle pull toward straight; slow to
+                                     // fully resolve, matching soft iteration count
+const SWAY_AMPLITUDE = 14;          // px range of the ambient wobble target
+const SWAY_SPEED = 0.018;           // Brownian motion in solution (no gravity)
+const SWAY_PULL = 0.03;             // bounded — will NOT accumulate/drift
+const BRUSH_RADIUS = 70;
+const BRUSH_STRENGTH = 5.5;
+const DRAG_PULL = 0.15;             // eased follow while held — applied once
+                                     // per frame (not per constraint
+                                     // iteration), independent of how soft
+                                     // the structural constraints are
+const LABEL_MASK_RADIUS = 15;       // paper-colored patch behind each O
+
+const startX = window.innerWidth / 2;
+const startY = 140;
+const HINGE_SPACING = REF_TOTAL_LEN / (N_HINGES - 1);
+
+const hinges = [];
+for (let i = 0; i < N_HINGES; i++) {
+  const x = startX, y = startY + i * HINGE_SPACING;
+  hinges.push({ x, y, oldX: x, oldY: y, pinned: i === 0, restX: x, restY: y });
+}
+
+let dragIndex = -1;
+let pointerX = -9999, pointerY = -9999;
+let hasPointer = false;
+let time = 0;
+
+function nearestHingeIndex(x, y) {
+  let best = -1, bestDist = 45;
+  for (let i = 0; i < hinges.length; i++) {
+    const d = Math.hypot(hinges[i].x - x, hinges[i].y - y);
+    if (d < bestDist) { bestDist = d; best = i; }
+  }
+  return best;
+}
+
+function toLocal(evt) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: evt.clientX - rect.left, y: evt.clientY - rect.top };
+}
+
+canvas.addEventListener("pointerdown", (e) => {
+  const { x, y } = toLocal(e);
+  const idx = nearestHingeIndex(x, y);
+  if (idx >= 0 && !hinges[idx].pinned) {
+    dragIndex = idx;
+    pointerX = x; pointerY = y;
+    canvas.classList.add("dragging");
+    canvas.setPointerCapture(e.pointerId);
+  }
+});
+canvas.addEventListener("pointermove", (e) => {
+  const { x, y } = toLocal(e);
+  pointerX = x; pointerY = y;
+  hasPointer = true;
+});
+canvas.addEventListener("pointerleave", () => { hasPointer = false; });
+canvas.addEventListener("pointerup", () => {
+  dragIndex = -1;
+  canvas.classList.remove("dragging");
+});
+canvas.addEventListener("pointercancel", () => {
+  dragIndex = -1;
+  canvas.classList.remove("dragging");
+});
+
+function updateRope() {
+  time += SWAY_SPEED;
+
+  for (let i = 0; i < hinges.length; i++) {
+    const p = hinges[i];
+    if (p.pinned) continue;
+
+    const vx = (p.x - p.oldX) * DAMPING;
+    const vy = (p.y - p.oldY) * DAMPING;
+    p.oldX = p.x; p.oldY = p.y;
+    p.x += vx;
+    p.y += vy;
+
+    // Gentle ambient sway instead of gravity (chain is in solution): a
+    // weak, bounded pull toward a slowly-oscillating target near rest —
+    // can't accumulate into drift since the target itself stays near rest.
+    const targetX = p.restX + Math.sin(time + i * 0.9) * SWAY_AMPLITUDE;
+    const targetY = p.restY + Math.cos(time * 0.8 + i * 1.1) * SWAY_AMPLITUDE * 0.6;
+    p.x += (targetX - p.x) * SWAY_PULL;
+    p.y += (targetY - p.y) * SWAY_PULL;
+
+    if (i === dragIndex) {
+      // Eased follow — reaches toward the cursor but does not teleport to
+      // it; how far it actually gets is then limited below by the rope's
+      // own (soft) structural constraints.
+      p.x += (pointerX - p.x) * DRAG_PULL;
+      p.y += (pointerY - p.y) * DRAG_PULL;
+    } else if (hasPointer) {
+      // cursor brushes nearby rope aside as it passes, without grabbing
+      const dx = p.x - pointerX, dy = p.y - pointerY;
+      const dist = Math.hypot(dx, dy);
+      if (dist < BRUSH_RADIUS && dist > 0.001) {
+        const push = (1 - dist / BRUSH_RADIUS) * BRUSH_STRENGTH;
+        p.x += (dx / dist) * push;
+        p.y += (dy / dist) * push;
+      }
+    }
+  }
+
+  // Deliberately soft: LINK_STIFFNESS < 1 means each pass only partially
+  // corrects a stretched/compressed link, so the rope's shape relaxes
+  // gradually across many frames instead of fully re-converging within a
+  // single one. That gradual relaxation — combined with the low DAMPING
+  // above killing any velocity it generates — is what makes a release ease
+  // back slowly instead of snapping, and what lets a drag actually displace
+  // the rope instead of being canceled out immediately.
+  for (let iter = 0; iter < CONSTRAINT_ITERATIONS; iter++) {
+    for (let i = 0; i < hinges.length - 1; i++) {
+      const a = hinges[i], b = hinges[i + 1];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const dist = Math.hypot(dx, dy) || 0.0001;
+      const diff = ((dist - HINGE_SPACING) / dist) * LINK_STIFFNESS;
+      const offX = dx * 0.5 * diff, offY = dy * 0.5 * diff;
+      if (!a.pinned) { a.x += offX; a.y += offY; }
+      if (!b.pinned) { b.x -= offX; b.y -= offY; }
+    }
+    for (let i = 1; i < hinges.length - 1; i++) {
+      const prev = hinges[i - 1], cur = hinges[i], next = hinges[i + 1];
+      if (cur.pinned) continue;
+      const midX = (prev.x + next.x) / 2;
+      const midY = (prev.y + next.y) / 2;
+      cur.x += (midX - cur.x) * BEND_STIFFNESS;
+      cur.y += (midY - cur.y) * BEND_STIFFNESS;
+    }
+  }
+}
+
+// Sample the current rope at arc-length fraction t (0..1): returns
+// position + unit tangent + unit normal, via linear interpolation between
+// hinges weighted by the rope's own current cumulative arc length.
+function sampleRope(t, hingeArcLen, hingeTotalLen) {
+  const target = t * hingeTotalLen;
+  let i = 0;
+  while (i < hingeArcLen.length - 2 && hingeArcLen[i + 1] < target) i++;
+  const a = hinges[i], b = hinges[i + 1];
+  const segLen = hingeArcLen[i + 1] - hingeArcLen[i] || 0.0001;
+  const segT = (target - hingeArcLen[i]) / segLen;
+  const x = a.x + (b.x - a.x) * segT;
+  const y = a.y + (b.y - a.y) * segT;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 0.0001;
+  return { x, y, tanX: dx / len, tanY: dy / len, normX: -dy / len, normY: dx / len };
+}
+
+function drawChain() {
+  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  ctx.strokeStyle = "#0A0A0A";
+  ctx.fillStyle = "#0A0A0A";
+  ctx.lineWidth = 1.75;
+  ctx.lineCap = "butt";
+  ctx.lineJoin = "miter";
+  ctx.font = "600 19px Inter, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  const hingeArcLen = [0];
+  for (let i = 1; i < hinges.length; i++) {
+    hingeArcLen.push(hingeArcLen[i - 1] + Math.hypot(hinges[i].x - hinges[i - 1].x, hinges[i].y - hinges[i - 1].y));
+  }
+  const hingeTotalLen = hingeArcLen[hingeArcLen.length - 1];
+
+  const mapped = referenceT.map((t, i) => {
+    const s = sampleRope(t, hingeArcLen, hingeTotalLen);
+    const offset = referenceOffset[i];
+    return { x: s.x + s.normX * offset, y: s.y + s.normY * offset };
+  });
+
+  ctx.beginPath();
+  mapped.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+  ctx.stroke();
+
+  // Paper-colored patches sit behind each O, occluding the line passing
+  // underneath it — same convention as the real hero chain (the line is a
+  // single continuous stroke with no gaps in it; the label clearance is
+  // faked with an opaque circle, not a break in the path itself).
+  ctx.fillStyle = "#FFFFFF";
+  for (let i = 0; i < mapped.length; i++) {
+    if (referencePoints[i].isJoint && i > 0) {
+      ctx.beginPath();
+      ctx.arc(mapped[i].x, mapped[i].y, LABEL_MASK_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  ctx.fillStyle = "#0A0A0A";
+  for (let i = 0; i < mapped.length; i++) {
+    if (referencePoints[i].isJoint && i > 0) {
+      ctx.fillText("O", mapped[i].x, mapped[i].y);
+    }
+  }
+
+  const anchor = hinges[0];
+  ctx.strokeRect(anchor.x - 14, anchor.y - 30, 28, 14);
+}
+
+function loop() {
+  updateRope();
+  drawChain();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>

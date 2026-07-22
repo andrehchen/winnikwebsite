@@ -1,0 +1,12 @@
+name,degree_level,role,joining_date,email,photo_filename,Project
+Andy (Xu) Chen,phd,Chemistry PhD Student,2024,andyxu.chen@mail.utoronto.ca,andy.jpg,mass cytometry
+Rojina Allamehnejad,phd,Chemical Engineering PhD Student,2025,rojina.allamehnejad@mail.utoronto.ca,rojina.jpg,cncs
+Richard Fuku,phd,Chemistry PhD Candidate,2022,richard.fuku@mail.utoronto.ca,richard.jpg,cncs
+Seoyeon (Julia) Lee,phd,Chemistry PhD Student,2024,seoyeonjulia.lee@mail.utoronto.ca,julia.jpg,mass cytometry
+Tianjia Yang,phd,Chemistry PhD Candidate,2022,tianjia.yang@mail.utoronto.ca,tianjia.jpg,mass cytometry
+Xiaochong (Summer) Li,postdoc,Postdoctoral Fellow,2021,xiaochong.li@mail.utoronto.ca,xiaochong.jpg,mass cytometry
+Owen Chun Ho Kwok,phd,Chemistry PhD Candidate,2022,owen.kwok@mail.utoronto.ca,owen.jpg,coating
+Franklin Frasca,postdoc,Postdoctoral Fellow,2026,franklin.frasca@utoronto.ca,placeholder.png,coating
+ Andre Chen,undergrad,"HBSc, Laboratory Medicine and Pathobiology",2026,andrehenry.chen@mail.utoronto.ca,placeholder.png,mass cytometry
+Carmen Chu,undergrad,"HBSc, Chemistry",2026,carmenjw.chu@mail.utoronto.ca,placeholder.png,cncs
+Roheet Mohanta,undergrad,"HBSc, Material Sciences",2026,roheet.mohanta@mail.utoronto.ca,placeholder.png,coating

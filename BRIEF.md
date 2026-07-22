@@ -436,11 +436,92 @@ rhythm, all-same-weight text, emoji, drop shadows, decorative gradients.
 - **Logo:** no separate logo image was found on the current site (it uses a text
   wordmark), so the bracket-*n* typographic lockup is the default mark. If the group
   has an actual logo file, use it instead.
-- **Single-page vs multi-page:** decided — multi-page. Home is a landing page
-  with a short overview/summary card per section (Research, People,
-  Publications, Contact), each linking out to its own dedicated page for the
-  full content. Nav links point to real pages, not in-page anchors.
+- **Single-page vs multi-page:** decided — multi-page. Home is a landing page:
+  a full-height hero, then one full scroll section per area (not cards),
+  each with its own bordered button linking out to a dedicated page. Nav
+  links point to real pages, not in-page anchors.
+- **People split:** decided — split into two pages. `winnik.html` for Mitch
+  Winnik (PI) and `people.html` for the rest of the group. Both have their
+  own nav entry and their own Home section/button.
 - **Photo treatment:** grayscale-unified is recommended for cohesion, but confirm the
   group is happy losing the original color.
 - **News section:** include only if there's content to sustain it.
 - **Hosting:** confirm the Grav-vs-static deployment path with the department early.
+
+---
+
+## 11. Current build status (last updated 2026-07-15)
+
+Everything below is **structure and design system only** — no final page
+content (bios, member grid, publication list, research copy) has been
+written yet. Content passes happen when explicitly requested, one page at a
+time.
+
+### Done
+
+- **Design tokens locked** (`css/tokens.css`): palette (ink/paper/paper-2/mute/
+  hairline), type scale, spacing scale. Fonts finalized after live comparison:
+  **Archivo** (display), **Inter** (body), **Source Code Pro** (mono) —
+  replaced the brief's original Space Grotesk/IBM Plex Mono suggestion.
+  Specimen page preserved at `foundation.html` (not linked in nav).
+- **References gathered** (`/references`, 4 files): Matter Lab (primary),
+  Li Bowen team page, BBML/Miserez, Wheeler microfluidics — each with
+  specific notes on what to borrow vs. avoid, not screenshots.
+- **Site structure decided:** multi-page. Six pages: `index.html`,
+  `research.html`, `winnik.html`, `people.html`, `publications.html`,
+  `contact.html`. `winnik.html` (PI) and `people.html` (rest of group) are
+  split rather than one combined People page.
+- **Sticky nav** built on every page: bracket-*n* wordmark
+  (`⟦ Winnik Group ⟧ₙ`) left, links right, active-page underline via
+  `aria-current="page"`, mobile hamburger below 640px, visible focus states.
+- **Home page (`index.html`)** built as a full scroll experience:
+  - Full-height hero (`min-height: 100vh - header height`) with a
+    placeholder thesis line and a circular-free triple-chevron scroll cue
+    that animates on hover (staggered downward pulse, respects
+    `prefers-reduced-motion`).
+  - Five full "section-preview" blocks below it — Research, Winnik, People,
+    Publications, Contact — alternating left/right text position and
+    white/off-white bands, each with a bordered `.btn` link to its page.
+  - No divider line between hero and the first section (removed per
+    feedback).
+- **Sub-pages** (`research.html`, `winnik.html`, `people.html`,
+  `publications.html`, `contact.html`): consistent header/nav/footer shell +
+  a page-intro title/subtitle + a placeholder note describing what real
+  content goes there. `winnik.html` and `people.html` cross-link to each
+  other.
+- **Footer**: minimal version on every page (copyright + Dept. of Chemistry +
+  UofT links). Does not yet include the social links from BRIEF §6 (Twitter/
+  Instagram/YouTube/LinkedIn).
+- **Local dev workflow**: static server via `python3 -m http.server 8000` in
+  the project root; review happens live in the user's own browser, not via
+  screenshots (Claude does not self-verify with screenshots either — just
+  reports the change and asks the user to check).
+
+### Not started yet
+
+- **Hero content**: still placeholder text. Needs the actual hairline
+  polymer-chain/molecular SVG line art + one-line thesis copy (BRIEF §2, §6).
+- **Signature hairline SVG motifs**: the skeletal-structure section markers
+  described in BRIEF §2 haven't been designed anywhere yet — only mono-text
+  eyebrow labels exist so far.
+- **Research page**: five editorial rows (image + heading + verbatim
+  description, alternating image side, mono eyebrow labels) — content is
+  fully specified in BRIEF §6, just not built.
+- **Winnik page**: PI photo, contact details, full bio (BRIEF §6 has the
+  complete text).
+- **People page**: grayscale member grid for the 8 group members (BRIEF §6
+  has the full table). Grayscale treatment (CSS `filter: grayscale(1)`)
+  decided but not yet applied since no photos are placed yet.
+- **Publications page**: needs the live publications list fetched and
+  reproduced in mono citation style, grouped by year (BRIEF §6).
+- **Contact page**: content is short and fully specified in BRIEF §6, just
+  needs to replace the placeholder.
+- **Image assets**: none downloaded or referenced yet (see BRIEF §7 for
+  source URLs).
+- **Footer social links**: department social URLs from BRIEF §6 not yet
+  added.
+- **Responsive pass**: only the nav has been mobile-tested so far; research
+  rows / people grid / publications list haven't been built yet, so their
+  mobile behavior is untested.
+- **Open decisions from §10** (logo, news section, hosting path) are still
+  unresolved — need the group's input.
